@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# ML model artifacts (large binary files)
+backend/ml_models/*.pkl
+backend/ml_models/*.joblib
+backend/ml_models/*.pt
+backend/ml_models/*.h5
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+frontend/.env.local
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Alembic env files
+backend/alembic.ini
+
+# Secrets (NEVER COMMIT)
+backend/.env
+.env
+*.pem
+*.key

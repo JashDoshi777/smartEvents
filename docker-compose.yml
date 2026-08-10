@@ -1,0 +1,128 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL + TimescaleDB ─────────────────────────────────
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: liveiq_postgres
+    environment:
+      POSTGRES_DB: liveiq
+      POSTGRES_USER: liveiq
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-liveiq_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U liveiq -d liveiq"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - liveiq_net
+
+  # ─── Redis ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: liveiq_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - liveiq_net
+
+  # ─── MongoDB ─────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: liveiq_mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: liveiq
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-liveiq_mongo_password}
+      MONGO_INITDB_DATABASE: liveiq
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - liveiq_net
+
+  # ─── FastAPI Backend ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: liveiq_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: uvicorn main:app --reload --host 0.0.0.0 --port 8000 --log-level info
+    networks:
+      - liveiq_net
+
+  # ─── Celery Worker ───────────────────────────────────────────
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: liveiq_celery_worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - liveiq_net
+
+  # ─── Celery Beat (Scheduler) ─────────────────────────────────
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: liveiq_celery_beat
+    command: celery -A app.workers.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - liveiq_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  mongo_data:
+
+networks:
+  liveiq_net:
+    driver: bridge

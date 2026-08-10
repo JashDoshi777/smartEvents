@@ -1,0 +1,18 @@
+{
+  "trained_at": "2026-08-06T19:28:36.506303",
+  "n_samples": 4000,
+  "data_source": "synthetic",
+  "features": [
+    "composite_score",
+    "city_music_score",
+    "log_capacity",
+    "category_enc",
+    "is_international",
+    "lead_days",
+    "days_since_last_event_in_city",
+    "competitor_events_same_weekend",
+    "phq_avg_rank"
+  ],
+  "price_model_r2": 0.9825,
+  "fill_model_r2": 0.9075
+}

@@ -1,0 +1,74 @@
+# ─── Web Framework ───────────────────────────────────────────────────────────
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# ─── Database ────────────────────────────────────────────────────────────────
+sqlalchemy==2.0.41          # 2.0.36+ fixes Python 3.13 __firstlineno__ TypeError
+asyncpg==0.30.0            # 0.30.0+ has pre-built wheels for Python 3.13
+alembic==1.13.1
+psycopg2-binary==2.9.10    # 2.9.10 has Python 3.13 pre-built wheels
+aiosqlite==0.20.0          # Used by test suite (SQLite in-memory, no Docker needed)
+# NOTE: greenlet is a transitive dep of both sqlalchemy and playwright.
+# Do NOT pin it here — let playwright pin it to its tested version.
+
+# ─── MongoDB ─────────────────────────────────────────────────────────────────
+motor==3.6.0               # 3.6.0 is compatible with Python 3.13
+pymongo==4.9.2             # motor 3.6.0 requires pymongo>=4.9,<4.10
+
+# ─── Redis & Caching ─────────────────────────────────────────────────────────
+redis==5.0.4
+hiredis==2.3.2
+
+# ─── Task Queue ──────────────────────────────────────────────────────────────
+celery==5.4.0
+celery[redis]==5.4.0
+flower==2.0.1
+
+# ─── Config & Secrets ────────────────────────────────────────────────────────
+python-dotenv==1.0.1
+pydantic==2.10.3           # 2.8.0+ ships pydantic-core with PyO3 0.22 (Python 3.13 OK)
+pydantic-settings==2.6.1   # Matches pydantic 2.10.x API
+
+# ─── HTTP Client (Async) ─────────────────────────────────────────────────────
+httpx==0.27.0
+aiohttp==3.9.5
+
+# ─── Web Scraping ────────────────────────────────────────────────────────────
+playwright==1.49.0         # 1.49.0+ released after Python 3.13 — compatible greenlet bundled
+beautifulsoup4==4.12.3
+lxml==5.3.1                # 5.3.0+ has pre-built Python 3.13 Windows wheels
+
+# ─── Auth & Security ─────────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0
+bcrypt>=4.1.0                  # Direct use — passlib's CryptContext is incompatible with bcrypt>=4.1
+slowapi==0.1.9
+
+# ─── Utilities ───────────────────────────────────────────────────────────────
+python-dateutil==2.9.0
+pytz==2024.1
+structlog==24.1.0
+pytrends==4.9.2            # Google Trends unofficial API client
+
+# ─── Testing ─────────────────────────────────────────────────────────────────
+pytest==8.2.0
+pytest-asyncio==0.23.7
+pytest-cov==5.0.0
+
+# ─── Dev Tools ───────────────────────────────────────────────────────────────
+black==24.4.2
+ruff==0.4.4
+
+# ─── ML / Data Science (Sprint 4) ───────────────────────────────────────────
+scikit-learn>=1.5.0            # IsolationForest (anomaly detection) + GBR (pricing)
+numpy>=1.26.4                  # Array ops for ML features
+scipy>=1.12.0                  # Required by scikit-learn
+joblib>=1.4.0                  # Model serialisation / persistence
+prophet>=1.3.0                 # Time-series demand forecasting (Sprint 6C)
+vaderSentiment==3.3.2           # Rule-based NLP sentiment — no training data needed (M7 social listening)
+
+# ─── AI / LLM ────────────────────────────────────────────────────────────────
+groq>=1.5.0                # Groq LPU inference — OpenAI-compatible client
+
+# ─── PDF Report Export (Sprint 5E) ───────────────────────────────────────────
+reportlab==4.2.5           # Pure-Python PDF generation, no system deps (unlike weasyprint/GTK)
