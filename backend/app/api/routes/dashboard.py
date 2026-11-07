@@ -22,6 +22,7 @@ from app.models.event import Event
 from app.models.venue import Venue
 from app.api.deps import get_current_user
 from app.services.latest_metric import latest_metric
+from app.services.market_scope import market_clause
 from app.models.user import User
 
 router = APIRouter()
@@ -42,12 +43,7 @@ async def get_dashboard_summary(
     EntityMetric = latest_metric()  # de-duplicated: newest snapshot per entity
 
     # Market scoping — applies to every entity-derived figure below.
-    if market == "india":
-        scope = Entity.primary_market == "India"
-    elif market == "global":
-        scope = or_(Entity.primary_market != "India", Entity.primary_market.is_(None))
-    else:
-        scope = true()
+    scope = market_clause(market)
 
     # ── Hero counts ────────────────────────────────────────────────────────
     total_entities   = await db.scalar(select(func.count(Entity.id)).where(scope)) or 0

@@ -14,6 +14,7 @@ from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.api.deps import get_current_user
 from app.services.latest_metric import latest_metric
+from app.services.market_scope import market_clause
 from app.models.user import User
 
 router = APIRouter()
@@ -42,10 +43,7 @@ async def get_breakouts(
         select(Entity, EntityMetric)
         .join(EntityMetric, Entity.id == EntityMetric.entity_id)
     )
-    if market == "india":
-        stmt = stmt.where(Entity.primary_market == "India")
-    elif market == "global":
-        stmt = stmt.where(or_(Entity.primary_market != "India", Entity.primary_market.is_(None)))
+    stmt = stmt.where(market_clause(market))
     if category:
         stmt = stmt.where(Entity.category.ilike(f"%{category}%"))
     if entity_type:
@@ -132,10 +130,7 @@ async def get_viral_signals(
         .join(EntityMetric, Entity.id == EntityMetric.entity_id)
         .where(EntityMetric.news_mentions_7d.isnot(None))
     )
-    if market == "india":
-        stmt = stmt.where(Entity.primary_market == "India")
-    elif market == "global":
-        stmt = stmt.where(or_(Entity.primary_market != "India", Entity.primary_market.is_(None)))
+    stmt = stmt.where(market_clause(market))
     stmt = stmt.order_by(desc(EntityMetric.news_mentions_7d)).limit(limit)
     result = await db.execute(stmt)
     rows = result.all()
