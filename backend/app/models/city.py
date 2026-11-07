@@ -57,6 +57,8 @@ class City(Base):
     # Metadata
     google_trends_geo_code = Column(String(20))     # e.g. "IN-MH" for Maharashtra
     mapbox_bbox = Column(JSONB)                     # Bounding box for map rendering
+    # Per-field source/QID/retrieval-date provenance for enriched data
+    data_provenance = Column(JSONB)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

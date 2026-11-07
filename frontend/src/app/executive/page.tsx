@@ -14,9 +14,9 @@ import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Ring, StackBar } from '@/components/dashboard/Ring';
 import { getKPIs, getBriefing, getPortfolio, downloadExecutiveReportPdf } from '@/lib/api';
 import { num, timeAgo } from '@/lib/format';
+import { CountUp } from '@/components/dashboard/CountUp';
 import styles from './page.module.css';
 
-const healthBadge = (h: string) => h === 'Strong' ? 'badge badge-blue' : 'badge badge-neutral';
 const scoreColor = (_v?: number | null) => 'var(--accent)';
 
 export default function ExecutivePage() {
@@ -73,16 +73,16 @@ export default function ExecutivePage() {
       {kpis.error && !k ? <GlassCard><ErrorState message="Couldn’t load portfolio KPIs." onRetry={() => kpis.mutate()} /></GlassCard> : (
         <div className={styles.bento}>
           <GlassCard className={`${styles.tile} ${styles.gauge}`}>
-            <div className={styles.eyebrow}>Portfolio health</div>
+            <h2 className={styles.title}>Portfolio health</h2>
             {!k ? <Skeleton height={190} radius={22} /> : (<>
               <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 0' }}>
                 <Ring value={score} size={170} stroke={16} color={scoreColor(score)}>
-                  <div><div className={styles.rounded} style={{ fontSize: '3rem', fontWeight: 700, lineHeight: 1 }}>{score ?? '—'}</div><div className="t-caption text-tertiary">avg demand / 100</div></div>
+                  <div><div className={'num-rounded'} style={{ fontSize: '3rem', fontWeight: 700, lineHeight: 1 }}>{score ?? '—'}</div><div className="t-caption text-tertiary">avg demand / 100</div></div>
                 </Ring>
               </div>
-              {hs && <div className={styles.legend}>
+              {hs && <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <StackBar parts={[{ label: 'Strong', value: hs.strong, color: 'var(--accent)' }, { label: 'Good', value: hs.good, color: 'var(--text-secondary)' }, { label: 'Needs data', value: hs.needs_data, color: 'var(--fill-tertiary)' }, { label: 'Weak', value: hs.weak, color: 'var(--text-tertiary)' }]} />
-                <div style={{ display: 'flex', gap: '4px 14px', flexWrap: 'wrap' }}>
+                <div className={styles.legend}>
                   {[['Strong', hs.strong, 'var(--accent)'], ['Good', hs.good, 'var(--text-secondary)'], ['Needs data', hs.needs_data, 'var(--fill-tertiary)'], ['Weak', hs.weak, 'var(--text-tertiary)']].map(([l, v, c]) => (
                     <span key={l as string} className={styles.legendRow}><span className={styles.dot} style={{ background: c as string }} /><span className="t-caption text-secondary">{l} {v}</span></span>
                   ))}
@@ -93,13 +93,10 @@ export default function ExecutivePage() {
 
           <GlassCard className={`${styles.tile} ${styles.brief}`} delay={0.05}>
             <div className={styles.head}>
-              <div>
-                <div className={styles.eyebrow}>Copilot</div>
-                <h2 className="t-title3" style={{ fontWeight: 700 }}>Executive briefing</h2>
-              </div>
+              <h2 className={styles.title}>Executive briefing</h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span className="t-caption text-tertiary">{briefing.data ? `Generated ${timeAgo(briefing.data.generated_at)}` : ''}</span>
-                <button className="btn btn-ghost btn-icon" onClick={() => briefing.mutate()} disabled={briefing.isValidating} aria-label="Refresh briefing"><RefreshCw size={14} className={briefing.isValidating ? 'spin' : ''} /></button>
+                <button className="btn" onClick={() => briefing.mutate()} disabled={briefing.isValidating} aria-label="Refresh briefing"><RefreshCw size={14} className={briefing.isValidating ? 'spin' : ''} /></button>
               </div>
             </div>
             {briefing.isLoading && !briefing.data ? (
@@ -108,33 +105,29 @@ export default function ExecutivePage() {
               : <p className={`t-body text-secondary ${styles.briefing}`}>{briefing.data?.briefing || 'No briefing available yet.'}</p>}
           </GlassCard>
 
-          <div className={styles.statsRow}>
-            {!k ? [0, 1, 2].map(i => <Skeleton key={i} height={96} radius={22} />) : <>
-              <GlassCard className={styles.stat} delay={0.08}><span className={styles.eyebrow}>{isIndia ? 'Indian acts' : 'Acts tracked'}</span><span className={`${styles.rounded} ${styles.statVal}`}>{num(isIndia ? k.entity_portfolio.indian : k.entity_portfolio.total_tracked)}</span><span className="t-footnote text-tertiary">{num(k.entity_portfolio.with_live_metrics)} with live metrics ({Math.round(k.entity_portfolio.metrics_coverage_pct)}%)</span></GlassCard>
-              <GlassCard className={styles.stat} delay={0.1}><span className={styles.eyebrow}>International</span><span className={`${styles.rounded} ${styles.statVal}`}>{num(k.entity_portfolio.international)}</span><span className="t-footnote text-tertiary">Global acts available to book</span></GlassCard>
-              <GlassCard className={styles.stat} delay={0.12}><span className={styles.eyebrow}>Cities live</span><span className={`${styles.rounded} ${styles.statVal}`}>{num(k.city_coverage.active_on_district)}</span><span className="t-footnote text-tertiary">{num(k.city_coverage.expansion_opportunities)} expansion targets</span></GlassCard>
+          <GlassCard className={styles.stats} delay={0.08}>
+            {!k ? <Skeleton height={70} radius={14} style={{ gridColumn: '1 / -1' }} /> : <>
+              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={isIndia ? k.entity_portfolio.indian : k.entity_portfolio.total_tracked} format={num as unknown as (n: number) => string} /></span><span className="t-footnote text-secondary">{isIndia ? 'Indian acts' : 'Acts tracked'} · {Math.round(k.entity_portfolio.metrics_coverage_pct)}% scored</span></div>
+              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={k.entity_portfolio.international} /></span><span className="t-footnote text-secondary">International acts to book</span></div>
+              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={k.city_coverage.active_on_district} /></span><span className="t-footnote text-secondary">Cities live · {num(k.city_coverage.expansion_opportunities)} to open</span></div>
             </>}
-          </div>
+          </GlassCard>
 
           <GlassCard className={`${styles.tile} ${styles.rank}`} delay={0.14}>
-            <div>
-              <div className={styles.eyebrow}>Leaderboard</div>
-              <h2 className="t-title3" style={{ fontWeight: 700 }}>Top ranked acts{isIndia ? ' · India' : ''}</h2>
-            </div>
+            <h2 className={styles.title}>Top ranked acts{isIndia ? ' in India' : ''}</h2>
             {portfolio.isLoading && !p ? <SkeletonRows rows={6} /> : portfolio.error && !p ? <ErrorState onRetry={() => portfolio.mutate()} />
               : rows.length === 0 ? <EmptyState title="No ranked acts yet" message="Rankings appear once demand scores are computed." /> : (
               <div>
                 {rows.map((e, i) => (
-                  <div key={`${e.id}-${i}`} className={styles.row}>
-                    <span className={styles.num}>{i + 1}</span>
+                  <motion.div key={`${e.id}-${i}`} className={styles.row} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 * i }}>
+                    <span className={styles.avatar}>{e.name.charAt(0).toUpperCase()}</span>
                     <div className={styles.info}>
-                      <span className={`t-callout ${styles.ellip}`} style={{ fontWeight: 600 }}>{e.name}</span>
-                      <span className={`t-footnote text-tertiary ${styles.ellip}`}>{[e.category ?? e.type, e.country].filter(Boolean).join(' · ')}</span>
+                      <span className={`t-body ${styles.ellip}`} style={{ fontWeight: 500 }}>{e.name}</span>
+                      <span className={`t-footnote text-secondary ${styles.ellip}`}>{[e.category ?? e.type, e.health].filter(Boolean).join(' · ')}</span>
                     </div>
-                    <div className={styles.bar}><motion.div className={styles.fill} style={{ background: scoreColor(e.composite_score) }} initial={{ width: 0 }} animate={{ width: `${((e.composite_score ?? 0) / top) * 100}%` }} transition={{ duration: 0.8, delay: 0.1 + i * 0.04, ease: [0.22, 1, 0.36, 1] }} /></div>
-                    <span className={`${styles.rounded} t-headline`} style={{ textAlign: 'right' }}>{e.composite_score ?? '—'}</span>
-                    <span className={healthBadge(e.health)}>{e.health}</span>
-                  </div>
+                    <div className={styles.bar}><motion.div className={styles.fill} initial={{ width: 0 }} animate={{ width: `${((e.composite_score ?? 0) / top) * 100}%` }} transition={{ duration: 0.8, delay: 0.1 + i * 0.04, ease: [0.22, 1, 0.36, 1] }} /></div>
+                    <span className="num-rounded t-headline" style={{ textAlign: 'right' }}>{e.composite_score ?? '—'}</span>
+                  </motion.div>
                 ))}
               </div>
             )}

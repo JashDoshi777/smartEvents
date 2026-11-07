@@ -818,3 +818,20 @@ export interface CrisisAlert { entity_id: string; entity_name: string; severity:
 export const getSentiment = (entityId: string) => apiFetch<SentimentResponse>(`/social/sentiment/${entityId}`);
 export const getTopics = (entityId: string, days = 30) => apiFetch<TopicsResponse>(`/social/topics/${entityId}?days=${days}`);
 export const getCrisis = () => apiFetch<{ alerts: CrisisAlert[]; total: number; methodology?: string }>('/social/crisis-alerts');
+
+// ── Events list ──────────────────────────────────────────────────
+export interface EventRow {
+  id: string; title: string; category: string | null; source: string | null; status: string | null;
+  event_date: string | null; venue: string | null; city: string | null;
+  ticket_price_min: number | null; ticket_price_max: number | null;
+  total_capacity: number | null; tickets_sold: number | null; fill_rate: number | null; booking_url: string | null;
+}
+export interface EventsResponse { total: number; events: EventRow[] }
+export const getEvents = (p?: { limit?: number; offset?: number; source?: string }) => {
+  const q = new URLSearchParams();
+  if (p?.limit) q.set('limit', String(p.limit));
+  if (p?.offset) q.set('offset', String(p.offset));
+  if (p?.source) q.set('source', p.source);
+  const qs = q.toString();
+  return apiFetch<EventsResponse>(`/events${qs ? `?${qs}` : ''}`);
+};

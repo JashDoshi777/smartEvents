@@ -4,11 +4,11 @@
 .bento { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
 .s4 { grid-column: span 4; } .s8 { grid-column: span 8; }
 .hero { padding: 24px 26px; display: flex; flex-direction: column; }
-.eyebrow { font-size: .8125rem; font-weight: 600; color: var(--text-secondary); }
-.big { font: 700 clamp(4rem, 8vw, 6rem)/1 ui-rounded, var(--font-sans); letter-spacing: -.05em; margin-top: 14px; font-variant-numeric: tabular-nums; }
+.title { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.015em; }
+.big { font: 700 clamp(4rem, 8vw, 6rem)/1 ui-rounded, var(--font-sans); letter-spacing: -.05em; margin-top: auto; padding-top: 16px; font-variant-numeric: tabular-nums; }
 .bigSub { color: var(--text-secondary); font-size: .9375rem; margin-top: 6px; }
 .trendLine { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: .875rem; font-weight: 600; text-transform: capitalize; }
-.heroStats { display: flex; gap: 22px; flex-wrap: wrap; margin-top: auto; padding-top: 22px; }
+.heroStats { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 18px; padding-top: 18px; border-top: .5px solid var(--divider); }
 .heroStats div { display: flex; flex-direction: column; gap: 2px; }
 .heroStats b { font: 650 1.25rem ui-rounded, var(--font-sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .heroStats span { font-size: .75rem; color: var(--text-tertiary); }
@@ -21,7 +21,7 @@
 .pRow { display: flex; flex-direction: column; gap: 6px; font-size: .8125rem; color: var(--text-secondary); }
 .pRow > div:first-child { display: flex; justify-content: space-between; }
 .pTrack { height: 8px; border-radius: 4px; background: var(--fill-tertiary); overflow: hidden; }
-.pFill { height: 100%; border-radius: 4px; background: var(--accent); }
+.pFill { height: 100%; border-radius: 4px; background: var(--text-primary); opacity: .85; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; border-radius: 999px; font-size: .75rem; font-weight: 700; text-transform: capitalize; }
 .note { font-size: .75rem; color: var(--text-tertiary); line-height: 1.55; margin-top: 10px; }
 .center { display: flex; flex-direction: column; align-items: center; }

@@ -8,23 +8,23 @@
 .main { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); gap: 18px; align-items: start; }
 .calCard { padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .calHead { display: flex; align-items: center; gap: 8px; }
-.monthTitle { flex: 1; font-size: 1.375rem; font-weight: 750; letter-spacing: -.03em; }
+.monthTitle { flex: 1; font-size: 1.5rem; font-weight: 700; letter-spacing: -.03em; }
 .monthTitle span { color: var(--text-tertiary); font-weight: 500; }
 .dow, .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .dow span { text-align: center; font-size: .6875rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-tertiary); padding: 4px 0; }
 .dowWknd { color: var(--text-secondary) !important; }
-.day { position: relative; aspect-ratio: 1 / 0.92; min-height: 52px; border-radius: 14px; border: 0; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 4px; padding: 7px 2px 4px; transition: background .16s, transform .16s; }
-.day:hover { background: var(--fill-tertiary); }
+.day { position: relative; aspect-ratio: 1 / 0.8; min-height: 52px; border-radius: 12px; border: 0; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 4px; padding: 7px 2px 4px; transition: background .16s, transform .16s; }
+.day:hover { background: var(--fill-quaternary); }
 .day:active { transform: scale(.94); }
 .dayNum { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; font-size: .9375rem; font-weight: 500; }
 .dayOut { opacity: .32; }
 .dayPast .dayNum { color: var(--text-tertiary); }
-.dayWknd { background: var(--fill-quaternary); }
-.dayBooked { background: var(--accent-dim); }
+.dayWknd .dayNum { color: var(--text-secondary); }
+.dayBooked { background: var(--fill-quaternary); }
 .dayToday .dayNum { background: var(--accent); color: #fff; font-weight: 700; }
-.daySel { box-shadow: 0 0 0 2px var(--accent) inset; }
+.daySel:not(.dayToday) .dayNum { background: var(--fill-tertiary); }
 .dots { display: flex; gap: 3px; height: 6px; }
-.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-tertiary); }
 .dotMore { font-size: .625rem; line-height: 6px; color: var(--text-tertiary); font-weight: 700; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 2px 4px 0; }
 .legendItem { display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; color: var(--text-secondary); }
@@ -51,3 +51,14 @@
   .day { min-height: 46px; aspect-ratio: auto; height: 52px; }
   .dayNum { width: 26px; height: 26px; font-size: .875rem; }
 }
+
+.headline { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.01em; }
+.sub { font-size: .8125rem; color: var(--text-secondary); line-height: 1.4; }
+.summary { display: grid; grid-template-columns: auto repeat(3, minmax(0, 1fr)); align-items: center; padding: 18px 4px; }
+.summary > * { padding: 0 14px; }
+.summary > * + * { border-left: .5px solid var(--divider); }
+.sumRing { display: flex; align-items: center; gap: 12px; }
+.sumVal { font-family: ui-rounded, "SF Pro Rounded", var(--font-sans); font-size: 1.75rem; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
+.sumCol { display: flex; flex-direction: column; gap: 2px; }
+.evBtn { width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+@media (max-width: 720px) { .summary > * { padding: 0 8px; } .sumVal { font-size: 1.375rem; } .sumRing .sub { display: none; } }

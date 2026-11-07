@@ -1,8 +1,8 @@
 .wrap { max-width: 760px; display: flex; flex-direction: column; gap: 22px; }
 .section { display: flex; flex-direction: column; gap: 8px; }
-.sectionTitle { padding-left: 16px; text-transform: uppercase; letter-spacing: .06em; }
+.sectionTitle { padding-left: 16px; font-size: .8125rem; font-weight: 400; }
 .sectionNote { padding: 0 16px; }
-.iconBox { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: var(--fill-tertiary); color: var(--text-secondary); }
+.iconBox { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: transparent; color: var(--text-secondary); }
 .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .status { display: inline-flex; align-items: center; gap: 5px; font: 600 .75rem var(--font-sans); flex-shrink: 0; }

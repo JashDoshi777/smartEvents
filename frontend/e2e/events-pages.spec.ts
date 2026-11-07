@@ -8,10 +8,14 @@ test.describe('events pages', () => {
   test('fill-rate monitor renders real events without errors', async ({ page }) => {
     const errors = trackErrors(page);
     await page.goto('/events');
-    await expect(page.getByText('Events on record')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('All events')).toBeVisible({ timeout: 20000 });
     await expect(page.getByText('Events tracked')).toBeVisible();
     await expect(page.getByText(/^₹[\d,]+$/).first()).toBeVisible();
     await expect(page.getByText('City demand')).toBeVisible();
+    await expect(page.getByText('92', { exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: /Show more/ }).click();
+    await page.getByRole('button', { name: 'PredictHQ' }).click();
+    await expect(page.getByText(/PredictHQ · Sports/).first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
   });

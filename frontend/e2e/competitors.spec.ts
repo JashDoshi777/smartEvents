@@ -12,7 +12,7 @@ test.describe('Competitors', () => {
     for (const id of ['district', 'bookmyshow', 'insider', 'ticketmaster_india']) {
       await expect(page.getByTestId(`platform-${id}`)).toBeVisible({ timeout: 25_000 });
     }
-    await expect(page.getByText('Market gaps by city')).toBeVisible();
+    await expect(page.getByText('Market gaps')).toBeVisible();
     await expect(page.locator('p', { hasText: 'Pune' }).first()).toBeVisible();
     // NewsAPI can be rate-limited upstream: accept either live articles (with safe external links) or the empty state.
     const link = page.locator('a[href^="http"][target="_blank"]').first();

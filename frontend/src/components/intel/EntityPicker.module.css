@@ -18,3 +18,9 @@
 .item:hover { background: var(--fill-tertiary); }
 .txt { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .none { padding: 18px; text-align: center; }
+
+.inline { max-width: none; }
+.inline .trigger { background: transparent !important; padding: 8px 0; min-height: 44px; justify-content: flex-end; border: 0; }
+.inline .nm { font-weight: 400; color: var(--text-secondary); }
+.inline .av { display: none; }
+.inline .pop { left: auto; right: 0; width: 300px; max-width: 80vw; }

@@ -4,8 +4,7 @@ import { getPortfolio, PortfolioEntity } from '@/lib/api';
 
 export function scoreColor(s: number | null | undefined) {
   if (s == null || s <= 0) return 'var(--text-tertiary)';
-  if (s >= 45) return 'var(--accent)';
-  return 'var(--text-secondary)';
+  return 'var(--text-primary)';
 }
 
 export type Verdict = { label: string; tone: 'accent' | 'neutral'; color: string; blurb: string };

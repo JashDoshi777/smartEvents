@@ -3,9 +3,8 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import useSWR from 'swr';
-import { CheckCircle2, XCircle, Moon, Sun, Server, Database, HardDrive, Zap, Info, Star, FileDown, LogOut, ChevronRight, Globe2, User as UserIcon, Loader2 } from 'lucide-react';
+import { CheckCircle2, XCircle, Moon, Sun, Server, Database, HardDrive, Star, FileDown, LogOut, ChevronRight, Globe2, User as UserIcon, Loader2 } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
-import { MetricTile } from '@/components/ui/MetricTile';
 import { Segmented } from '@/components/ui/Controls';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorState } from '@/components/ui/States';
@@ -30,7 +29,7 @@ const API_NOTES: Record<string, string> = {
 function Section({ title, note, children }: { title: string; note?: string; children: React.ReactNode }) {
   return (
     <section className={styles.section}>
-      <h2 className={`t-caption text-tertiary ${styles.sectionTitle}`}>{title}</h2>
+      <h2 className={`text-secondary ${styles.sectionTitle}`}>{title}</h2>
       <div className="list-group">{children}</div>
       {note && <p className={`t-caption text-tertiary ${styles.sectionNote}`}>{note}</p>}
     </section>
@@ -77,24 +76,24 @@ export default function SettingsPage() {
         {user && (
           <Section title="Account">
             <div className="list-row">
-              <div className={styles.iconBox} style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}><UserIcon size={16} /></div>
+              <div className={styles.iconBox}><UserIcon size={20} strokeWidth={1.6} /></div>
               <div className={styles.grow}>
                 <span className="t-callout" style={{ fontWeight: 600 }}>{user.full_name}</span>
                 <span className="t-footnote text-tertiary">{user.email} · {user.role}</span>
               </div>
-              <button className="btn btn-danger btn-sm" onClick={logout}><LogOut size={14} /> Log out</button>
+              <button className="btn" style={{ color: 'var(--negative)', background: 'none', padding: '8px 4px' }} onClick={logout}>Log out</button>
             </div>
           </Section>
         )}
 
         <Section title="Preferences" note="Saved on this device.">
           <div className="list-row">
-            <div className={styles.iconBox}>{theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}</div>
+            <div className={styles.iconBox}>{theme === 'dark' ? <Moon size={20} strokeWidth={1.6} /> : <Sun size={20} strokeWidth={1.6} />}</div>
             <div className={styles.grow}><span className="t-callout" style={{ fontWeight: 600 }}>Appearance</span></div>
             <Segmented ariaLabel="Appearance" value={theme} onChange={v => { if (v !== theme) toggle(); }} options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
           </div>
           <div className="list-row">
-            <div className={styles.iconBox}><Globe2 size={16} /></div>
+            <div className={styles.iconBox}><Globe2 size={20} strokeWidth={1.6} /></div>
             <div className={styles.grow}>
               <span className="t-callout" style={{ fontWeight: 600 }}>Default market</span>
               <span className="t-footnote text-tertiary">What dashboards show first</span>
@@ -105,7 +104,7 @@ export default function SettingsPage() {
 
         <Section title="Shortcuts">
           <Link href="/watchlist" className="list-row">
-            <div className={styles.iconBox}><Star size={16} color="var(--text-secondary)" /></div>
+            <div className={styles.iconBox}><Star size={20} strokeWidth={1.6} color="var(--text-secondary)" /></div>
             <div className={styles.grow}>
               <span className="t-callout" style={{ fontWeight: 600 }}>Watchlist</span>
               <span className="t-footnote text-tertiary">{watch.data ? `${num(watch.data.total)} act${watch.data.total === 1 ? '' : 's'} watched` : '—'}</span>
@@ -113,7 +112,7 @@ export default function SettingsPage() {
             <ChevronRight size={16} color="var(--text-tertiary)" />
           </Link>
           {canExport && (          <button className="list-row" onClick={exportPdf} disabled={exporting}>
-              <div className={styles.iconBox}>{exporting ? <Loader2 size={16} className="spin" /> : <FileDown size={16} />}</div>
+              <div className={styles.iconBox}>{exporting ? <Loader2 size={20} strokeWidth={1.6} className="spin" /> : <FileDown size={20} strokeWidth={1.6} />}</div>
               <div className={styles.grow}>
                 <span className="t-callout" style={{ fontWeight: 600 }}>Export executive report</span>
                 <span className="t-footnote text-tertiary">{exporting ? 'Generating PDF…' : 'PDF with KPIs, top acts and AI briefing'}</span>
@@ -123,23 +122,21 @@ export default function SettingsPage() {
         </Section>
 
         <section className={styles.section}>
-          <h2 className={`t-caption text-tertiary ${styles.sectionTitle}`}>System status</h2>
-          {health.error && !h ? <div className="list-group"><ErrorState message="Backend unreachable." onRetry={() => health.mutate()} /></div> : (
-            <div className={styles.tiles}>
-              {!h ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={110} radius={22} />) : <>
-                <MetricTile label="Status" value={h.status === 'ok' ? 'Healthy' : 'Degraded'} accent={h.status === 'ok'} icon={<Server size={16} />} />
-                <MetricTile label="Data sources" value={`${configured}/${apiEntries.length}`} icon={<Zap size={16} />} />
-                <MetricTile label="Version" value={h.version} icon={<Info size={16} />} />
-              </>}
+          <h2 className={`text-secondary ${styles.sectionTitle}`}>System status</h2>
+          {health.error && !h ? <div className="list-group"><ErrorState message="Backend unreachable." onRetry={() => health.mutate()} /></div> : !h ? <Skeleton height={156} radius={20} /> : (
+            <div className="list-group">
+              <div className="list-row"><div className={styles.grow}><span className="t-body">Status</span></div><Status ok={h.status === 'ok'} up="Healthy" down="Degraded" /></div>
+              <div className="list-row"><div className={styles.grow}><span className="t-body">Data sources configured</span></div><span className="t-body text-secondary num-rounded">{configured} of {apiEntries.length}</span></div>
+              <div className="list-row"><div className={styles.grow}><span className="t-body">Backend version</span></div><span className="t-body text-secondary num-rounded">{h.version}</span></div>
             </div>
           )}
         </section>
 
         {h && <>
           <Section title="Infrastructure">
-            <div className="list-row"><div className={styles.iconBox}><Database size={16} /></div><div className={styles.grow}><span className="t-callout">PostgreSQL</span></div><Status ok={h.services.postgres === 'up'} /></div>
-            <div className="list-row"><div className={styles.iconBox}><HardDrive size={16} /></div><div className={styles.grow}><span className="t-callout">MongoDB</span></div><Status ok={h.services.mongodb === 'up'} /></div>
-            <div className="list-row"><div className={styles.iconBox}><Server size={16} /></div><div className={styles.grow}><span className="t-callout">Redis</span></div><Status ok={h.services.redis === 'up'} /></div>
+            <div className="list-row"><div className={styles.iconBox}><Database size={20} strokeWidth={1.6} /></div><div className={styles.grow}><span className="t-callout">PostgreSQL</span></div><Status ok={h.services.postgres === 'up'} /></div>
+            <div className="list-row"><div className={styles.iconBox}><HardDrive size={20} strokeWidth={1.6} /></div><div className={styles.grow}><span className="t-callout">MongoDB</span></div><Status ok={h.services.mongodb === 'up'} /></div>
+            <div className="list-row"><div className={styles.iconBox}><Server size={20} strokeWidth={1.6} /></div><div className={styles.grow}><span className="t-callout">Redis</span></div><Status ok={h.services.redis === 'up'} /></div>
           </Section>
           <Section title="Data sources" note="Read-only status from the backend configuration. Keys are never shown here.">
             {apiEntries.map(([key, ok]) => (

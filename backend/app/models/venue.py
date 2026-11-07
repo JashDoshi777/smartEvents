@@ -79,6 +79,8 @@ class Venue(Base):
 
     # Metadata
     is_active = Column(Boolean, default=True)
+    # Per-field source/QID/retrieval-date provenance for enriched data
+    data_provenance = Column(JSONB)
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

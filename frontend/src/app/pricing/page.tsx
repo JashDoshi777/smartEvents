@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Ring, ROUNDED } from '@/components/insights/Ring';
+import { CountUp } from '@/components/insights/CountUp';
 import { inr, inrCompact, num } from '@/lib/format';
 import {
   ApiError, EntitySearchResult, PricingResult, getElasticityCurve, getMarketCities, getPortfolio,
@@ -200,7 +201,7 @@ export default function PricingPage() {
             {touched && (errors.capacity || errors.price) && <p className={styles.err} role="alert">{errors.capacity || errors.price}</p>}
           </div>
 
-          <button type="submit" className={`btn btn-primary ${styles.cta}`} disabled={busy} data-testid="optimize">{busy ? 'Analysing signals…' : <><Sparkles size={16} /> Optimize price</>}</button>
+          <button type="submit" className={`btn btn-primary ${styles.cta}`} disabled={busy} data-testid="optimize">{busy ? 'Analysing signals…' : <><Sparkles size={16} strokeWidth={1.75} /> Optimize price</>}</button>
         </form>
 
         <div className={styles.results} aria-live="polite">
@@ -221,33 +222,33 @@ export default function PricingPage() {
           {result && rec && (
             <motion.div className={styles.bento} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 140, damping: 20 }} data-testid="result">
               <GlassCard className={styles.hero}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-                  <span className={styles.eyebrow}>Recommended price · {result.entity.name}</span>
-                  <span className="badge badge-neutral">{rec.price_tier}</span>
+                <div>
+                  <h3 className={styles.title}>Recommended price</h3>
+                  <p className={styles.sub}>{result.entity.name} · {city} · {rec.price_tier}</p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
-                  <span className={styles.price} data-testid="rec-price">{inr(rec.recommended_price)}</span>
+                  <CountUp className={styles.price} data-testid="rec-price" value={rec.recommended_price} format={inr} />
                   {delta != null && <span className={styles.delta} style={{ color: delta > 0 ? 'var(--positive)' : delta < 0 ? 'var(--negative)' : 'var(--text-tertiary)' }}>
                     {delta >= 0 ? <ArrowUpRight size={17} /> : <ArrowDownRight size={17} />}{inr(Math.abs(delta))}{deltaPct != null && ` (${Math.abs(deltaPct).toFixed(0)}%)`} vs {inr(rec.proposed_price)}</span>}
                 </div>
                 <PriceLadder bench={result.benchmarks} proposed={rec.proposed_price} recommended={rec.recommended_price} />
               </GlassCard>
               <GlassCard className={styles.fill}>
-                <span className={styles.eyebrow}>Predicted fill</span>
-                <Ring value={rec.predicted_fill_rate} size={116} stroke={13} color="var(--accent)"><span style={{ fontFamily: ROUNDED, fontSize: '1.75rem', fontWeight: 700 }}>{rec.predicted_fill_rate != null ? `${Math.round(rec.predicted_fill_rate)}%` : '—'}</span></Ring>
-                <p className="t-footnote text-secondary">{rec.predicted_fill_rate != null ? `≈ ${num(Math.round(capN * rec.predicted_fill_rate / 100))} of ${num(capN)} seats` : 'No fill estimate'}</p>
+                <h3 className={styles.title}>Predicted fill</h3>
+                <Ring value={rec.predicted_fill_rate} size={116} stroke={13} color="var(--text-primary)"><span style={{ fontFamily: ROUNDED, fontSize: '1.75rem', fontWeight: 700 }}>{rec.predicted_fill_rate != null ? `${Math.round(rec.predicted_fill_rate)}%` : '—'}</span></Ring>
+                <p className={styles.sub}>{rec.predicted_fill_rate != null ? `≈ ${num(Math.round(capN * rec.predicted_fill_rate / 100))} of ${num(capN)} seats` : 'No fill estimate'}</p>
               </GlassCard>
               <GlassCard className={styles.half}>
-                <h3 className="t-headline">Why this price</h3>
-                <div className={styles.reason}><Sparkles size={15} color="var(--accent)" style={{ flexShrink: 0, marginTop: 3 }} /><p className="t-callout text-secondary">{rec.reasoning}</p></div>
-                <p className="t-footnote text-tertiary">{rec.confidence} · model {result.model}</p>
+                <h3 className={styles.title}>Why this price</h3>
+                <p className={styles.reason}>{rec.reasoning}</p>
+                <p className={styles.sub}>{rec.confidence} · model {result.model}</p>
               </GlassCard>
               <GlassCard className={styles.half}>
-                <h3 className="t-headline">Signals</h3>
-                <div className={styles.signalList}>{signals.map(([k, v]) => <div key={k} className={styles.signal}><span className="t-callout text-secondary">{k}</span><span className="t-callout tnum" style={{ fontWeight: 650 }}>{v}</span></div>)}</div>
+                <h3 className={styles.title}>Signals</h3>
+                <div className={styles.signalList}>{signals.map(([k, v]) => <div key={k} className={styles.signal}><span className={styles.reason}>{k}</span><span className="num-rounded" style={{ fontWeight: 600 }}>{v}</span></div>)}</div>
               </GlassCard>
               <GlassCard className={styles.wide}>
-                <div><h3 className="t-headline">Price elasticity</h3><p className="t-footnote text-tertiary">Expected attendance at each price point</p></div>
+                <div><h3 className={styles.title}>Price elasticity</h3><p className={styles.sub}>Expected attendance at each price point</p></div>
                 {rec.sensitivity_curve.length > 0 ? (
                   <div className={styles.chart}><ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={rec.sensitivity_curve} margin={{ top: 8, right: 10, left: -12, bottom: 0 }}>
@@ -267,17 +268,17 @@ export default function PricingPage() {
           {!result && (
             <div className={styles.bento}>
               <GlassCard className={styles.wide} delay={0.05}>
-                <div><h3 className="t-headline">{catKey.charAt(0).toUpperCase() + catKey.slice(1)} price ladder</h3><p className="t-footnote text-tertiary">Market benchmarks{cityMult != null ? ` · ${city} runs at ${cityMult}× the national level` : ''}</p></div>
+                <div><h3 className={styles.title}>{catKey.charAt(0).toUpperCase() + catKey.slice(1)} price ladder</h3><p className={styles.sub}>Market benchmarks{cityMult != null ? ` · ${city} runs at ${cityMult}× the national level` : ''}</p></div>
                 {bench ? <PriceLadder bench={bench} proposed={price && !errors.price ? priceN : null} recommended={null} /> : <Skeleton height={80} radius={14} />}
               </GlassCard>
               <GlassCard className={styles.wide} delay={0.1}>
-                <div><h3 className="t-headline">Price level by city</h3><p className="t-footnote text-tertiary">{act ? `Where ${act.name} supports the highest ticket, starting from ${inr(priceN)}` : 'Choose an act to see how the same ticket prices across Indian cities.'}</p></div>
+                <div><h3 className={styles.title}>Price level by city</h3><p className={styles.sub}>{act ? `Where ${act.name} supports the highest ticket, starting from ${inr(priceN)}` : 'Choose an act to see how the same ticket prices across Indian cities.'}</p></div>
                 {!act ? <EmptyState title="Pick an act" message="City price levels are shown for the act you choose." />
                   : !elasticity.data ? <Skeleton height={140} radius={14} />
                   : <div className={styles.bars} data-testid="city-bars">{curve.map(c => (
-                    <div key={c.city} className={styles.barRow}><span className="t-callout">{c.city}</span>
+                    <div key={c.city} className={styles.barRow}><span className={styles.reason} style={{ color: 'var(--text-primary)' }}>{c.city}</span>
                       <div className={styles.barTrack}><motion.div className={styles.barFill} style={{ background: c.city === city ? 'var(--accent)' : 'var(--text-tertiary)' }} initial={{ width: 0 }} animate={{ width: `${(c.optimal_price / maxCurve) * 100}%` }} transition={{ duration: .6 }} /></div>
-                      <span className="t-callout tnum" style={{ fontWeight: 650, textAlign: 'right' }}>{inrCompact(c.optimal_price)}</span></div>))}</div>}
+                      <span className="num-rounded" style={{ fontWeight: 600, textAlign: 'right' }}>{inrCompact(c.optimal_price)}</span></div>))}</div>}
               </GlassCard>
             </div>
           )}

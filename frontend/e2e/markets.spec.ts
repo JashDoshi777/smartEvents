@@ -38,7 +38,7 @@ test.describe('City Markets', () => {
     await page.goto('/markets');
     await page.getByTestId('city-Pune').click();
     await expect(page.getByTestId('detail-title')).toHaveText('Pune');
-    await page.getByRole('button', { name: 'All markets' }).click();
+    await page.getByRole('button', { name: 'Markets', exact: true }).click();
     await expect(page.getByTestId('city-Pune')).toBeVisible();
   });
 });

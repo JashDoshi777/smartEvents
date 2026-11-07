@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
-import { Radio, ShieldCheck, Siren, MessageCircle, Hash, ThumbsUp, ThumbsDown, Minus, Heart, MessagesSquare } from 'lucide-react';
+import { ShieldCheck, MessageCircle, Hash } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { EmptyState, ErrorState } from '@/components/ui/States';
@@ -15,11 +15,11 @@ import { EntityPicker } from '@/components/intel/EntityPicker';
 import { useScopedPortfolio } from '@/components/intel/entity-utils';
 import { getSentiment, getTopics, getCrisis } from '@/lib/api';
 import { compact, timeAgo } from '@/lib/format';
+import k from '@/components/intel/Kit.module.css';
 import styles from './page.module.css';
 
 const SEV: Record<string, string> = { critical: 'var(--negative)', high: 'var(--text-primary)', medium: 'var(--text-secondary)' };
 const labelColor = (l: string | null) => (l === 'positive' ? 'var(--positive)' : l === 'negative' ? 'var(--negative)' : 'var(--text-tertiary)');
-const LabelIcon = ({ l }: { l: string | null }) => (l === 'positive' ? <ThumbsUp size={13} /> : l === 'negative' ? <ThumbsDown size={13} /> : <Minus size={13} />);
 const pct = (v: number | null | undefined) => (v == null ? 0 : v * 100);
 
 function Content() {
@@ -61,40 +61,32 @@ function Content() {
   ];
 
   return (
-    <Page title="Social Listening" subtitle="Reddit and news sentiment, topics and crisis alerts, scored with VADER">
-      <GlassCard className={styles.card} delay={0.02}>
-        <div className={styles.head}>
-          <h2 className="t-headline" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Siren size={16} /> Crisis alerts</h2>
-          <span className="t-caption text-tertiary">Negative-sentiment spikes, last 24h vs prior 7 days</span>
-        </div>
-        {crisis.isLoading && !crisis.data ? <Skeleton height={56} radius={14} />
-          : crisis.error && !crisis.data ? <ErrorState message="Couldn’t load crisis alerts." onRetry={() => crisis.mutate()} />
-          : alerts.length === 0 ? (
-            <div className={styles.clear}>
-              <span className={styles.clearIcon}><ShieldCheck size={20} /></span>
-              <div><p className="t-callout" style={{ fontWeight: 600 }}>All clear</p><p className="t-footnote text-tertiary">No negative-sentiment spikes detected right now.</p></div>
-            </div>
-          ) : alerts.map((a, i) => (
-            <motion.div key={a.entity_id} className={styles.alert} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}>
-              <Siren size={16} color={SEV[a.severity]} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p className="t-callout" style={{ fontWeight: 600 }}>{a.entity_name}</p>
-                <p className="t-caption text-tertiary">Negative share {Math.round(a.negative_share_prior_7d * 100)}% to {Math.round(a.negative_share_last_24h * 100)}% (+{a.delta_pct_points} pts, {a.posts_last_24h} posts)</p>
-              </div>
-              <span className="t-caption" style={{ color: SEV[a.severity], fontWeight: 700, textTransform: 'uppercase' }}>{a.severity}</span>
-            </motion.div>
-          ))}
-      </GlassCard>
+    <Page title="Social Listening" subtitle="Reddit and news sentiment, topics and crisis alerts">
+      <div>
+        <p className={styles.secH}><span>Crisis alerts</span><span>Negative-sentiment spikes, last 24h vs prior 7 days</span></p>
+        <GlassCard className={k.group} delay={0.02}>
+          {crisis.isLoading && !crisis.data ? <div style={{ padding: 16 }}><Skeleton height={44} radius={12} /></div>
+            : crisis.error && !crisis.data ? <ErrorState message="Couldn’t load crisis alerts." onRetry={() => crisis.mutate()} />
+            : alerts.length === 0 ? (
+              <div className={styles.alertRow}><ShieldCheck size={20} strokeWidth={1.6} color="var(--text-secondary)" /><div><p style={{ fontSize: '.9375rem', fontWeight: 500 }}>All clear</p><p className="t-footnote text-secondary">No negative-sentiment spikes detected right now.</p></div></div>
+            ) : alerts.map((a, i) => (
+              <motion.div key={a.entity_id} className={styles.alertRow} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '.9375rem', fontWeight: 500 }}>{a.entity_name}</p>
+                  <p className="t-footnote text-secondary">Negative share {Math.round(a.negative_share_prior_7d * 100)}% to {Math.round(a.negative_share_last_24h * 100)}% (+{a.delta_pct_points} pts, {a.posts_last_24h} posts)</p>
+                </div>
+                <span className="t-footnote" style={{ color: SEV[a.severity], fontWeight: 600, textTransform: 'capitalize' }}>{a.severity}</span>
+              </motion.div>
+            ))}
+        </GlassCard>
+      </div>
 
-      <GlassCard className={styles.card} delay={0.06}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          <Radio size={18} color="var(--text-secondary)" />
-          <p className="t-headline">Inspect</p>
-          <div style={{ flex: 1, minWidth: 220 }}><EntityPicker entities={pickerList} value={entityId} onChange={setEntityId} loading={pLoading} placeholder={`Select ${isIndia ? 'an Indian' : 'a global'} act`} /></div>
-        </div>
+      <GlassCard style={{ padding: 20 }} delay={0.06}>
+        <h2 className={k.title} style={{ marginBottom: 12 }}>Inspect an act</h2>
+        <EntityPicker entities={pickerList} value={entityId} onChange={setEntityId} loading={pLoading} placeholder={`Select ${isIndia ? 'an Indian' : 'a global'} act`} />
         {sampled.length > 0 && (
           <div style={{ marginTop: 14 }}>
-            <p className="t-caption text-tertiary" style={{ marginBottom: 8 }}>Recently sampled</p>
+            <p className="t-footnote text-secondary" style={{ marginBottom: 8 }}>Recently sampled</p>
             <ChipRow value={entityId} onChange={setEntityId} options={sampled.slice(0, 10).map(x => ({ value: x.id, label: x.name, count: x.n }))} />
           </div>
         )}
@@ -103,62 +95,58 @@ function Content() {
       {entityId && (
         <>
           <div className={styles.grid}>
-            <GlassCard className={styles.card} delay={0.1}>
-              <div className={styles.head}><h2 className="t-headline" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><MessageCircle size={16} /> Sentiment</h2>
-                {s?.last_collected_at && <span className="t-caption text-tertiary">Collected {timeAgo(s.last_collected_at)}</span>}</div>
-              {sent.isLoading && !sent.data ? <Skeleton height={170} radius={14} />
+            <GlassCard style={{ padding: 20 }} delay={0.1}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+                <h2 className={k.title}>Sentiment</h2>
+                {s?.last_collected_at && <span className="t-footnote text-tertiary">Collected {timeAgo(s.last_collected_at)}</span>}
+              </div>
+              {sent.isLoading && !sent.data ? <Skeleton height={150} radius={14} style={{ marginTop: 16 }} />
                 : sent.error && !sent.data ? <ErrorState message="Couldn’t load sentiment." onRetry={() => sent.mutate()} />
-                : !ok ? <EmptyState icon={<MessageCircle size={32} strokeWidth={1.4} />} title="No social data yet" message="Listening covers a rotating subset of entities every 30 minutes. This one hasn’t been sampled yet." />
+                : !ok ? <EmptyState icon={<MessageCircle size={30} strokeWidth={1.5} />} title="No social data yet" message="Listening covers a rotating subset of entities every 30 minutes. This one hasn’t been sampled yet." />
                 : (
                   <>
                     <div className={styles.stack} role="img" aria-label="Sentiment split">
-                      {segs.map((g, i) => <motion.span key={g.k} style={{ background: g.c, borderRadius: 7 }} initial={{ width: 0 }} animate={{ width: `${g.v}%` }} transition={{ duration: 0.7, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] }} />)}
+                      {segs.map((g, i) => <motion.span key={g.k} style={{ background: g.c, borderRadius: 5 }} initial={{ width: 0 }} animate={{ width: `${g.v}%` }} transition={{ type: 'spring', stiffness: 70, damping: 16, delay: i * 0.06 }} />)}
                     </div>
                     <div className={styles.legend}>
-                      {segs.map(g => <div key={g.k} className={styles.legendItem}><span className="t-caption text-tertiary"><i className={styles.dot} style={{ background: g.c }} />{g.k}</span><b className="tnum">{Math.round(g.v)}%</b></div>)}
+                      {segs.map(g => <div key={g.k}><span className="t-footnote text-secondary"><i className={styles.dot} style={{ background: g.c }} />{g.k}</span><b className="num-rounded">{Math.round(g.v)}%</b></div>)}
                     </div>
-                    <div className={styles.meta}>
-                      <span className="t-caption text-tertiary">{s?.sample_size ?? 0} posts and articles analysed</span>
-                      <span className="t-caption text-tertiary">{s?.reddit_posts_7d ?? 0} Reddit (7d)</span>
-                      <span className="t-caption text-tertiary">{s?.news_mentions_7d ?? 0} news (7d)</span>
-                      {s?.compound != null && <span className="t-caption text-tertiary">Net tone {s.compound >= 0 ? '+' : ''}{s.compound.toFixed(2)}</span>}
-                    </div>
+                    <p className={styles.meta}>{s?.sample_size ?? 0} posts and articles analysed · {s?.reddit_posts_7d ?? 0} Reddit and {s?.news_mentions_7d ?? 0} news mentions in 7 days{s?.compound != null ? ` · net tone ${s.compound >= 0 ? '+' : ''}${s.compound.toFixed(2)}` : ''}</p>
                   </>
                 )}
             </GlassCard>
 
-            <GlassCard className={styles.card} delay={0.14}>
-              <div className={styles.head}><h2 className="t-headline" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Hash size={16} /> Trending topics</h2><span className="t-caption text-tertiary">Last 30 days</span></div>
-              {topics.isLoading && !topics.data ? <Skeleton height={140} radius={14} />
-                : topics.error && !topics.data ? <ErrorState message="Couldn’t load topics." onRetry={() => topics.mutate()} />
-                : tops.length === 0 ? <EmptyState icon={<Hash size={30} strokeWidth={1.4} />} title="No topics yet" message="No topic keywords found in collected posts." />
-                : tops.map((t, i) => (
-                  <div key={t.topic} className={styles.topic}>
-                    <div className={styles.topicTop}><span>{t.topic}</span><span className="tnum text-secondary">{compact(t.mentions)}</span></div>
-                    <div className={styles.track}><motion.i initial={{ width: 0 }} animate={{ width: `${(t.mentions / maxTop) * 100}%` }} transition={{ duration: 0.7, delay: i * 0.05, ease: [0.22, 1, 0.36, 1] }} /></div>
-                  </div>
-                ))}
-            </GlassCard>
+            <div>
+              <p className={styles.secH}><span>Trending topics</span><span>Last 30 days</span></p>
+              <GlassCard className={k.group} delay={0.14}>
+                {topics.isLoading && !topics.data ? <div style={{ padding: 16 }}><Skeleton height={120} radius={12} /></div>
+                  : topics.error && !topics.data ? <ErrorState message="Couldn’t load topics." onRetry={() => topics.mutate()} />
+                  : tops.length === 0 ? <EmptyState icon={<Hash size={28} strokeWidth={1.5} />} title="No topics yet" message="No topic keywords found in collected posts." />
+                  : tops.map((t, i) => (
+                    <motion.div key={t.topic} className={k.row} style={{ ['--inset' as string]: '20px', minHeight: 50 }} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
+                      <span className={k.main}><span className={k.name} style={{ textTransform: 'capitalize' }}>{t.topic}</span></span>
+                      <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)' }}>{compact(t.mentions)}</span>
+                    </motion.div>
+                  ))}
+              </GlassCard>
+            </div>
           </div>
 
           {ok && (
-            <GlassCard className={styles.card} delay={0.18}>
-              <div className={styles.head}><h2 className="t-headline">Recent posts</h2></div>
-              {posts.length === 0 ? <p className="t-callout text-tertiary">No recent posts.</p> : posts.map((p, i) => (
-                <motion.div key={`${i}-${p.analyzed_at}`} className={styles.post} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 8) * 0.03 }}>
-                  <span className={styles.postIcon} style={{ color: labelColor(p.sentiment_label), background: `color-mix(in srgb, ${labelColor(p.sentiment_label)} 14%, transparent)` }}><LabelIcon l={p.sentiment_label} /></span>
-                  <div className={styles.postText}>
-                    <p>{p.content_snippet}</p>
-                    <p className="t-caption text-tertiary" style={{ marginTop: 4, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      {p.likes != null && <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}><Heart size={11} /> {compact(p.likes)}</span>}
-                      {p.comments != null && <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}><MessagesSquare size={11} /> {compact(p.comments)}</span>}
-                      <span>{timeAgo(p.analyzed_at)}</span>
-                    </p>
-                  </div>
-                  <span className={styles.platform}>{p.platform}</span>
-                </motion.div>
-              ))}
-            </GlassCard>
+            <div>
+              <p className={styles.secH}><span>Recent posts</span></p>
+              <GlassCard className={k.group} delay={0.18}>
+                {posts.length === 0 ? <p className="t-callout text-tertiary" style={{ padding: 20 }}>No recent posts.</p> : posts.map((p, i) => (
+                  <motion.div key={`${i}-${p.analyzed_at}`} className={styles.post} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 8) * 0.03 }}>
+                    <i className={styles.dot} style={{ background: labelColor(p.sentiment_label), marginTop: 8, marginRight: 0 }} aria-label={p.sentiment_label ?? 'neutral'} />
+                    <div className={styles.postText}>
+                      <p>{p.content_snippet}</p>
+                      <p className={styles.postMeta}><span>{p.platform}</span>{p.likes != null && <span>{compact(p.likes)} likes</span>}{p.comments != null && <span>{compact(p.comments)} comments</span>}<span>{timeAgo(p.analyzed_at)}</span></p>
+                    </div>
+                  </motion.div>
+                ))}
+              </GlassCard>
+            </div>
           )}
         </>
       )}

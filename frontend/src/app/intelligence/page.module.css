@@ -3,7 +3,7 @@
 .panelPane { overflow: hidden; }
 
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 14px 4px; }
-.stat { padding: 2px 18px; display: flex; flex-direction: column; gap: 2px; position: relative; }
+.stat { padding: 2px 20px; display: flex; flex-direction: column; gap: 2px; position: relative; }
 .stat + .stat::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: .5px; background: var(--divider); }
 .statVal { font-family: ui-rounded, 'SF Pro Rounded', var(--font-sans); font-size: 1.75rem; font-weight: 700; letter-spacing: -0.04em; line-height: 1.1; }
 
@@ -15,7 +15,7 @@
 
 .listCard { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 !important; overflow: hidden; }
 .listHead { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: .5px solid var(--divider); }
-.rows { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; }
+.rows { flex: 1; min-height: 0; overflow-y: auto; padding: 0; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; }
 .row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left;
   border-radius: var(--radius-sm); cursor: pointer; min-height: 56px; transition: background var(--duration-fast); }
 .row:hover { background: var(--fill-quaternary); }
@@ -31,7 +31,7 @@
 .score { font-family: ui-rounded, 'SF Pro Rounded', var(--font-sans); font-size: 1.125rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1; }
 .mini { width: 100%; height: 4px; border-radius: 2px; background: var(--fill-tertiary); overflow: hidden; }
 .mini > i { display: block; height: 100%; border-radius: 2px; }
-.badge { flex-shrink: 0; width: 118px; display: flex; justify-content: flex-end; }
+.badge { flex-shrink: 0; min-width: 110px; display: flex; justify-content: flex-end; }
 .check { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--divider-strong); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; }
 .check[data-on="true"] { background: var(--accent); border-color: var(--accent); }
 
@@ -76,3 +76,21 @@
   .scoreCol { width: 64px; }
 }
 .actions a.btn, .actions a.btn:hover { text-decoration: none; }
+
+/* round 2 */
+.sectH { font-size: .8125rem; color: var(--text-secondary); padding: 0 4px 8px; }
+.inset { background: var(--fill-quaternary); border-radius: 14px; overflow: hidden; }
+.barRow { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 8px; position: relative; }
+.barRow + .barRow::before, .inset .kvRowFirst::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: .5px; background: var(--divider); }
+.sigMeta { display: flex; justify-content: space-between; font-size: .9375rem; }
+.sigMeta span:first-child { color: var(--text-secondary); }
+.actions { display: flex; flex-direction: column; gap: 10px; }
+.actions2 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.actions2 .btn { justify-content: center; min-height: 40px; }
+.inset > div[class*="kvRow"]:first-child::before { display: none; }
+.rank { width: 22px; text-align: right; color: var(--text-tertiary); font-size: .8125rem; flex-shrink: 0; }
+.panel { gap: 22px; }
+.stats { background: var(--bg-elevated); }
+.inset > div[class*="kvRow"] { padding: 12px 16px; }
+.inset > div[class*="kvRow"]::before { left: 16px; }
+.pAvatar { background: var(--fill-tertiary) !important; color: var(--text-secondary) !important; font-size: .9375rem; font-weight: 600; }

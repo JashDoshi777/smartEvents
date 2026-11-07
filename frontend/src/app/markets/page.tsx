@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, Building2, CloudRain, Landmark, MapPin, Rocket, Search, Sparkles, Store, Users } from 'lucide-react';
+import { ArrowLeft, Building2, MapPin, Search } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Segmented, ChipRow } from '@/components/ui/Controls';
@@ -15,14 +15,14 @@ import { CityIntelDetail, MarketCity, getCityRestaurants, getCityVenuesStrict, g
 import styles from './page.module.css';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const tone = (s: number | null | undefined) => (s == null ? 'var(--text-tertiary)' : 'var(--accent)');
+const tone = (s: number | null | undefined) => (s == null ? 'var(--text-tertiary)' : 'var(--text-primary)');
 const tierLabel = (t: number) => `Tier ${t}`;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function Meter({ value, color, delay = 0 }: { value: number | null; color: string; delay?: number }) {
   return (
     <div className={styles.meter}>
-      <motion.div className={styles.meterFill} style={{ background: color }} initial={{ width: 0 }} animate={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }} transition={{ duration: .7, delay, ease: [0.22, 1, 0.36, 1] }} />
+      <motion.div className={styles.meterFill} style={{ background: color, opacity: .85 }} initial={{ width: 0 }} animate={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }} transition={{ duration: .7, delay, ease: [0.22, 1, 0.36, 1] }} />
     </div>
   );
 }
@@ -31,25 +31,16 @@ function CityRow({ c, rank, active, onSelect }: { c: MarketCity; rank: number; a
   const comp = c.scores?.composite ?? null;
   return (
     <motion.button
-      type="button" layout="position" data-testid={`city-${c.name}`} aria-pressed={active}
-      className={`${styles.city} ${active ? styles.cityActive : ''} ${!c.active_on_district ? styles.cityTarget : ''}`}
-      onClick={onSelect} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .3, delay: Math.min(rank, 10) * 0.025 }}
+      type="button" data-testid={`city-${c.name}`} aria-pressed={active}
+      className={`${styles.city} ${active ? styles.cityActive : ''}`}
+      onClick={onSelect} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} whileTap={{ scale: .985 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 30, delay: Math.min(rank, 10) * 0.02 }}
     >
-      <div className={styles.cityTop}>
-        <span className={styles.rank}>{rank}</span>
-        <div className={styles.cityName}>
-          <p className="t-callout" style={{ fontWeight: 650 }}>{c.name}</p>
-          <p className="t-caption text-tertiary">{c.state} · {compact(c.metro_population ?? c.population)} metro</p>
-        </div>
-        <span className={`${styles.cityScore} tnum`} style={{ color: 'var(--text-primary)' }}>{comp != null ? comp.toFixed(1) : '—'}</span>
+      <div className={styles.cityName}>
+        <p className={styles.cityTitle}>{c.name}{!c.active_on_district && <i className={styles.dot} aria-label="Expansion target" title="Expansion target" />}</p>
+        <p className={styles.sub}>{c.state} · Tier {c.tier} · {c.active_on_district ? 'Live' : 'Expansion target'}</p>
       </div>
-      <Meter value={comp} color={tone(comp)} />
-      <div className={styles.cityMeta}>
-        <span className="badge badge-neutral">{tierLabel(c.tier)}</span>
-        {c.active_on_district
-          ? <span className="badge badge-neutral">District live</span>
-          : <span className="badge badge-amber"><Rocket size={11} /> Expansion target</span>}
-      </div>
+      <span className={`${styles.cityScore} num-rounded`}>{comp != null ? comp.toFixed(1) : '—'}</span>
     </motion.button>
   );
 }
@@ -70,13 +61,13 @@ function Restaurants({ city, counts }: { city: string; counts: Record<string, nu
   return (
     <GlassCard className={styles.card} delay={0.1}>
       <div className={styles.cardHead}>
-        <div className={styles.cardTitle}><Store size={16} color="var(--text-secondary)" /><h3 className="t-headline">Restaurant partnership engine</h3></div>
-        <span className="badge badge-neutral tnum">{num(total)} venues in {city}</span>
+        <h3 className={styles.title}>Restaurant partnership engine</h3>
+        <span className={styles.sub}>{num(total)} venues in {city}</span>
       </div>
-      <p className="t-footnote text-secondary">Dining and nightlife venues from Foursquare and OpenStreetMap — candidates for event cross-promotion.</p>
+      <p className={styles.sub}>Dining and nightlife venues from Foursquare and OpenStreetMap, candidates for event cross-promotion.</p>
       <ChipRow value={type} onChange={t => { setType(t); setShown(40); }} options={opts} />
       <div className={styles.searchWrap}>
-        <Search size={15} className={styles.searchIcon} />
+        <Search size={15} strokeWidth={1.75} className={styles.searchIcon} />
         <input className={`input ${styles.search}`} placeholder="Search name, cuisine or area" aria-label="Search venues" value={q} onChange={e => { setQ(e.target.value); setShown(40); }} />
       </div>
       {error && !data ? <ErrorState onRetry={() => mutate()} />
@@ -87,19 +78,18 @@ function Restaurants({ city, counts }: { city: string; counts: Record<string, nu
             <div className={styles.restList} data-testid="restaurant-list">
               {rows.slice(0, shown).map(r => (
                 <div key={r.id} className={styles.restRow}>
-                  <div className={styles.avatar} style={{ background: 'var(--fill-tertiary)', color: 'var(--text-secondary)' }}>{r.name.charAt(0).toUpperCase()}</div>
                   <div style={{ minWidth: 0, flex: 1 }}>
-                    <p className="t-callout" style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</p>
-                    <p className="t-caption text-tertiary" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <p className={styles.rowTitle} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</p>
+                    <p className={styles.sub} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {[r.venue_type && cap(r.venue_type), r.cuisines.slice(0, 2).join(', ') || null].filter(Boolean).join(' · ') || '—'}
                     </p>
                   </div>
-                  {r.website && <a className="btn btn-ghost btn-sm" href={r.website} target="_blank" rel="noopener noreferrer">Website</a>}
+                  {r.website && <a className={styles.link} href={r.website} target="_blank" rel="noopener noreferrer">Website</a>}
                 </div>
               ))}
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span className={styles.note}>Showing {Math.min(shown, rows.length)} of {num(rows.length)}{!needle && typeTotal > rows.length ? ` loaded (${num(typeTotal)} total, alphabetical)` : ''}</span>
+              <span className={styles.sub}>Showing {Math.min(shown, rows.length)} of {num(rows.length)}{!needle && typeTotal > rows.length ? ` loaded (${num(typeTotal)} total, alphabetical)` : ''}</span>
               {shown < rows.length && <button className="btn btn-tinted btn-sm" onClick={() => setShown(s => s + 40)}>Show more</button>}
             </div>
           </>
@@ -113,24 +103,21 @@ function Venues({ city }: { city: string }) {
   const venues = data?.venues ?? [];
   return (
     <GlassCard className={styles.card} delay={0.06}>
-      <div className={styles.cardHead}>
-        <div className={styles.cardTitle}><Landmark size={16} color="var(--text-secondary)" /><h3 className="t-headline">Recommended venues</h3></div>
-        {data && <span className="t-caption text-tertiary">{venues.length} venues</span>}
-      </div>
+      <div className={styles.cardHead}><h3 className={styles.title}>Recommended venues</h3>{data && <span className={styles.sub}>{venues.length} venues</span>}</div>
       {error && !data ? <ErrorState onRetry={() => mutate()} />
         : isLoading && !data ? <SkeletonRows rows={3} />
-        : venues.length === 0 ? <EmptyState icon={<Landmark size={32} strokeWidth={1.4} />} title="No venues on file" message={`No venues are tracked for ${city} yet.`} />
-        : <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {venues.map(v => (
-            <div key={v.id ?? v.name} className={styles.venueRow}>
+        : venues.length === 0 ? <EmptyState icon={<Building2 size={32} strokeWidth={1.5} />} title="No venues on file" message={`No venues are tracked for ${city} yet.`} />
+        : <div>
+          {venues.map((v, i) => (
+            <motion.div key={v.id ?? v.name} className={styles.venueRow} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
               <div style={{ minWidth: 0 }}>
-                <p className="t-callout" style={{ fontWeight: 600 }}>{v.name}</p>
-                <p className="t-caption text-tertiary">{[v.type?.replace(/_/g, ' '), ...(v.categories ?? []).slice(0, 2)].filter(Boolean).join(' · ') || '—'}</p>
+                <p className={styles.rowTitle}>{v.name}</p>
+                <p className={styles.sub}>{[v.type?.replace(/_/g, ' '), ...(v.categories ?? []).slice(0, 2)].filter(Boolean).join(' · ') || '—'}</p>
               </div>
-              <div className={styles.venueStat}><p className="t-callout tnum" style={{ fontWeight: 650 }}>{num(v.capacity)}</p><p className="t-caption text-tertiary">capacity</p></div>
-              <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="t-callout tnum" style={{ fontWeight: 650 }}>{v.avg_fill_rate != null ? `${Math.round(v.avg_fill_rate * 100)}%` : '—'}</p><p className="t-caption text-tertiary">avg fill</p></div>
-              <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="t-callout tnum" style={{ fontWeight: 650 }}>{inr(v.avg_ticket_price)}</p><p className="t-caption text-tertiary">avg ticket</p></div>
-            </div>
+              <div className={styles.venueStat}><p className="num-rounded" style={{ fontWeight: 600 }}>{num(v.capacity)}</p><p className={styles.sub}>capacity</p></div>
+              <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="num-rounded" style={{ fontWeight: 600 }}>{v.avg_fill_rate != null ? `${Math.round(v.avg_fill_rate * 100)}%` : '—'}</p><p className={styles.sub}>avg fill</p></div>
+              <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="num-rounded" style={{ fontWeight: 600 }}>{inr(v.avg_ticket_price)}</p><p className={styles.sub}>avg ticket</p></div>
+            </motion.div>
           ))}
         </div>}
     </GlassCard>
@@ -148,69 +135,60 @@ function CityDetail({ city, onBack }: { city: MarketCity; onBack: () => void }) 
 
   return (
     <div className={styles.detail}>
-      <button className={`btn btn-ghost btn-sm ${styles.back}`} onClick={onBack}><ArrowLeft size={14} /> All markets</button>
-      <div className={styles.dHead}>
-        
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 className="t-title1" data-testid="detail-title">{city.name}</h2>
-          <p className="t-callout text-secondary">{city.state}, India</p>
-        </div>
-        <div className={styles.chips}>
-          <span className="badge badge-neutral">{tierLabel(city.tier)}</span>
-          {city.active_on_district ? <span className="badge badge-neutral">District live</span> : <span className="badge badge-amber">Expansion target</span>}
-        </div>
+      <button className={`${styles.back}`} onClick={onBack}><ArrowLeft size={16} strokeWidth={1.75} /> Markets</button>
+      <div>
+        <h2 className={styles.cityHead} data-testid="detail-title">{city.name}</h2>
+        <p className={styles.sub}>{city.state} · Tier {city.tier} · {city.active_on_district ? 'District live' : 'Expansion target'}</p>
       </div>
 
-      <div className={styles.tiles}>
-        <GlassCard className={`${styles.tile} ${styles.tileRing}`}>
-          <span className="t-caption text-tertiary">Composite score</span>
-          <Ring value={s.composite} size={132} stroke={14} color="var(--accent)"><span className={styles.ringNum}>{s.composite != null ? s.composite.toFixed(1) : '—'}</span></Ring>
-          <span className="t-caption text-tertiary">out of 100</span>
-        </GlassCard>
+      <GlassCard className={styles.stats}>
+        <div className={styles.statRing}>
+          <Ring value={s.composite} size={96} stroke={11} color="var(--text-primary)"><span className={`${styles.ringNum} num-rounded`}>{s.composite != null ? s.composite.toFixed(1) : '—'}</span></Ring>
+          <span className={styles.sub}>Composite</span>
+        </div>
         {[
-          { l: 'Metro population', v: compact(city.metro_population ?? city.population), a: styles.tilePop },
-          { l: 'Youth share', v: city.youth_population_pct != null ? `${city.youth_population_pct}%` : '—', a: styles.tileYouth },
-          { l: 'Average monthly income', v: inrCompact(city.avg_monthly_income), a: styles.tileInc },
-        ].map((t, i) => (
-          <GlassCard key={t.l} className={`${styles.tile} ${t.a}`} delay={(i + 1) * 0.04}>
-            <span className="t-caption text-tertiary">{t.l}</span>
-            <span className={styles.tileVal}>{t.v}</span>
-          </GlassCard>
+          { l: 'Metro population', v: compact(city.metro_population ?? city.population) },
+          { l: 'Avg monthly income', v: inrCompact(city.avg_monthly_income) },
+          { l: 'Youth share', v: city.youth_population_pct != null ? `${city.youth_population_pct}%` : '—' },
+        ].map(t => (
+          <div key={t.l} className={styles.stat}><span className={`${styles.statVal} num-rounded`}>{t.v}</span><span className={styles.sub}>{t.l}</span></div>
         ))}
-      </div>
+      </GlassCard>
 
-      {error && !data ? <GlassCard><ErrorState message="Couldn’t load the intelligence report for this city." onRetry={() => mutate()} /></GlassCard>
-        : isLoading && !data ? <><Skeleton height={86} radius={16} /><Skeleton height={180} radius={22} /></>
+      {error && !data ? <GlassCard className={styles.card}><ErrorState message="Couldn’t load the intelligence report for this city." onRetry={() => mutate()} /></GlassCard>
+        : isLoading && !data ? <Skeleton height={70} radius={20} />
         : intel && (
-          <div className={`${styles.callout} ${city.active_on_district ? '' : styles.calloutTarget}`}>
-            {city.active_on_district ? <Sparkles size={18} color="var(--text-secondary)" /> : <Rocket size={18} color="var(--saffron)" />}
-            <div><p className="t-headline">{city.active_on_district ? 'District is live' : 'Expansion recommendation'}</p><p className="t-callout text-secondary">{intel.expansion_recommendation}</p></div>
-          </div>
+          <GlassCard className={styles.card}>
+            <h3 className={styles.title}>{city.active_on_district ? 'District is live here' : 'Expansion recommendation'}</h3>
+            <p className={styles.body}>{!city.active_on_district && <i className={styles.dot} style={{ marginRight: 8 }} />}{intel.expansion_recommendation}</p>
+          </GlassCard>
         )}
 
       <GlassCard className={styles.card} delay={0.04}>
-        <div className={styles.cardTitle}><Users size={16} color="var(--text-secondary)" /><h3 className="t-headline">Demand scores</h3></div>
+        <h3 className={styles.title}>Demand</h3>
         <div className={styles.scoreGrid}>
           {scoreRows.map(([l, v], i) => (
             <div key={l} className={styles.scoreRow}>
-              <div className={styles.scoreTop}><span className="t-callout">{l}</span><span className="t-callout tnum" style={{ fontWeight: 700, color: tone(v) }}>{v ?? '—'}</span></div>
-              <Meter value={v} color={tone(v)} delay={i * 0.06} />
+              <div className={styles.scoreTop}><span className={styles.body}>{l}</span><span className="num-rounded" style={{ fontWeight: 600 }}>{v ?? '—'}</span></div>
+              <Meter value={v} color="var(--text-primary)" delay={i * 0.06} />
             </div>
           ))}
         </div>
-        {(city.top_categories ?? []).length > 0 && <div className={styles.chips}>{city.top_categories!.map(c => <span key={c} className={styles.tag}>{c.replace(/_/g, ' ')}</span>)}</div>}
+        {(city.top_categories ?? []).length > 0 && <p className={styles.sub}>Top categories: {city.top_categories!.map(c => c.replace(/_/g, ' ')).join(' · ')}</p>}
       </GlassCard>
 
       {intel && (
         <GlassCard className={styles.card} delay={0.05}>
-          <div className={styles.cardHead}>
-            <div className={styles.cardTitle}><CloudRain size={16} color="var(--text-secondary)" /><h3 className="t-headline">Seasonality</h3></div>
-            <div className={styles.chips}><span className={styles.tag}>{intel.income_tier} income</span><span className={styles.tag}>{intel.youth_index} youth index</span></div>
-          </div>
+          <div className={styles.cardHead}><h3 className={styles.title}>Seasonality</h3><span className={styles.sub}>{intel.income_tier} income · {intel.youth_index} youth index</span></div>
           <div className={styles.months} aria-label="Demand by month">
-            {MONTHS.map((m, i) => <div key={m} className={`${styles.month} ${peak.has(i + 1) ? styles.monthHigh : low.has(i + 1) ? styles.monthLow : ''}`}>{m}</div>)}
+            {MONTHS.map((m, i) => (
+              <div key={m} className={styles.monthCol}>
+                <i className={`${styles.monthBar} ${peak.has(i + 1) ? styles.monthHigh : low.has(i + 1) ? styles.monthLow : ''}`} />
+                <span>{m[0]}</span>
+              </div>
+            ))}
           </div>
-          <p className="t-footnote text-secondary"><span style={{ color: 'var(--accent)' }}>Blue</span> months are peak demand; dimmed months are low demand. {intel.monsoon_risk.replace(/[\[\]']/g, '')}</p>
+          <p className={styles.sub}>Highlighted months are peak demand, faint months are low. {intel.monsoon_risk.replace(/[\[\]']/g, '')}</p>
         </GlassCard>
       )}
 
@@ -242,7 +220,7 @@ export default function MarketsPage() {
         <aside className={styles.listPane}>
           <div className={styles.listTop}>
             <div className={styles.searchWrap}>
-              <Search size={15} className={styles.searchIcon} />
+              <Search size={15} strokeWidth={1.75} className={styles.searchIcon} />
               <input className={`input ${styles.search}`} placeholder="Search cities" aria-label="Search cities" value={q} onChange={e => setQ(e.target.value)} />
             </div>
             <div className={styles.filters}>
@@ -252,8 +230,8 @@ export default function MarketsPage() {
           </div>
           <div className={styles.list}>
             {error && !data ? <ErrorState message="Couldn’t load the cities." onRetry={() => mutate()} />
-              : isLoading && !data ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={104} radius={16} />)
-              : filtered.length === 0 ? <EmptyState icon={<Building2 size={32} strokeWidth={1.4} />} title="No cities match" message="Try a different search or filter." />
+              : isLoading && !data ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} height={56} radius={12} />)
+              : filtered.length === 0 ? <EmptyState icon={<Building2 size={32} strokeWidth={1.5} />} title="No cities match" message="Try a different search or filter." />
               : <AnimatePresence initial={false}>{filtered.map(c => (
                 <CityRow key={c.name} c={c} rank={cities.indexOf(c) + 1} active={selected?.name === c.name} onSelect={() => { setSel(c.name); setMobileDetail(true); }} />
               ))}</AnimatePresence>}
@@ -261,10 +239,10 @@ export default function MarketsPage() {
         </aside>
         <section className={styles.detailPane} aria-live="polite">
           {selected
-            ? <AnimatePresence mode="wait"><motion.div key={selected.name} initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={{ duration: .26, ease: [0.22, 1, 0.36, 1] }}>
+            ? <AnimatePresence mode="wait"><motion.div key={selected.name} initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={{ type: 'spring', stiffness: 260, damping: 30 }}>
               <CityDetail city={selected} onBack={() => setMobileDetail(false)} />
             </motion.div></AnimatePresence>
-            : isLoading ? <Skeleton height={300} radius={22} /> : <EmptyState icon={<MapPin size={36} strokeWidth={1.4} />} title="Select a market" message="Pick a city to see demand, venues and partnership candidates." />}
+            : isLoading ? <Skeleton height={300} radius={22} /> : <EmptyState icon={<MapPin size={36} strokeWidth={1.5} />} title="Select a market" message="Pick a city to see demand, venues and partnership candidates." />}
         </section>
       </div>
     </Page>

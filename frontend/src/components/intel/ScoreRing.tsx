@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { scoreColor } from './entity-utils';
+import { Tick } from './Tick';
 
 export function ScoreRing({ score, size = 96, stroke = 7, label = true }: { score: number | null; size?: number; stroke?: number; label?: boolean }) {
   const r = (size - stroke) / 2;
@@ -22,8 +23,8 @@ export function ScoreRing({ score, size = 96, stroke = 7, label = true }: { scor
       </svg>
       {label && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
-          <span className="tnum" style={{ fontSize: size * 0.32, fontWeight: 700, letterSpacing: '-0.04em', color: score != null ? color : 'var(--text-tertiary)' }}>
-            {score != null ? Math.round(score) : '—'}
+          <span className="num-rounded" style={{ fontSize: size * 0.32, fontWeight: 700, letterSpacing: '-0.04em', color: score != null ? color : 'var(--text-tertiary)' }}>
+            <Tick value={score} />
           </span>
           <span className="t-caption text-tertiary" style={{ fontSize: Math.max(9, size * 0.11), marginTop: 2 }}>/100</span>
         </div>

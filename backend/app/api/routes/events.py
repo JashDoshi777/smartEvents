@@ -24,7 +24,7 @@ from app.models.metrics import EntityMetric
 from app.models.city import City
 from app.models.venue import Venue
 from app.models.event import Event
-from app.api.deps import require_roles
+from app.api.deps import require_roles, get_current_user
 from app.models.user import User, UserRole
 
 try:
@@ -341,3 +341,47 @@ async def model_event_deal(
     user: User = Depends(require_roles(UserRole.EXECUTIVE, UserRole.ANALYST, UserRole.BOOKER)),
 ):
     return await _compute_deal_model(request, db)
+
+
+@router.get("", summary="List events (upcoming first), with city/venue when known")
+async def list_events(
+    limit: int = 100,
+    offset: int = 0,
+    source: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    limit = max(1, min(limit, 500))
+    q = (
+        select(Event, Venue.name, Venue.city)
+        .outerjoin(Venue, Event.venue_id == Venue.id)
+        .order_by(Event.event_date.asc())
+        .limit(limit)
+        .offset(max(offset, 0))
+    )
+    if source:
+        q = q.where(Event.source == source)
+    rows = (await db.execute(q)).all()
+    total = await db.scalar(select(func.count(Event.id)).where(Event.source == source) if source else select(func.count(Event.id))) or 0
+    return {
+        "total": total,
+        "events": [
+            {
+                "id": str(e.id),
+                "title": e.title,
+                "category": e.category,
+                "source": e.source,
+                "status": e.status,
+                "event_date": e.event_date.isoformat() if e.event_date else None,
+                "venue": vname,
+                "city": vcity,
+                "ticket_price_min": float(e.ticket_price_min) if e.ticket_price_min is not None else None,
+                "ticket_price_max": float(e.ticket_price_max) if e.ticket_price_max is not None else None,
+                "total_capacity": e.total_capacity,
+                "tickets_sold": e.tickets_sold,
+                "fill_rate": e.fill_rate,
+                "booking_url": e.booking_url,
+            }
+            for e, vname, vcity in rows
+        ],
+    }

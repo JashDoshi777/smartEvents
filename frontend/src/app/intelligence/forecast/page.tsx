@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { LineChart as LineIcon, TrendingDown, TrendingUp, Minus, Hourglass } from 'lucide-react';
 import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CountUp } from '@/components/intel/CountUp';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -94,10 +95,10 @@ export default function ForecastPage() {
         ) : data ? (
           <div className={styles.bento} style={{ opacity: isValidating ? .6 : 1, transition: 'opacity .2s' }}>
             <GlassCard className={`${styles.hero} ${styles.s4}`}>
-              <span className={styles.eyebrow}>{data.entity.name}</span>
+              <h2 className={styles.title}>{data.entity.name}</h2>
               {hasForecast && last ? (
                 <>
-                  <div className={styles.big}>{last.predicted_trend_score.toFixed(0)}</div>
+                  <div className={styles.big}><CountUp value={last.predicted_trend_score} /></div>
                   <div className={styles.bigSub}>projected interest in {months} month{months === '1' ? '' : 's'}</div>
                   <div className={styles.trendLine} style={{ color: dirColor }}><DirIcon size={16} /> <span>{dir}</span><span className="text-tertiary" style={{ textTransform: 'none', fontWeight: 400 }}> · range {last.lower_bound.toFixed(0)} to {last.upper_bound.toFixed(0)}</span></div>
                 </>
@@ -117,7 +118,7 @@ export default function ForecastPage() {
             {hasForecast ? (
               <GlassCard className={`${styles.pad} ${styles.s8}`} delay={.05}>
                 <div className={styles.head}>
-                  <h2 className="t-headline">Search interest</h2>
+                  <h2 className={styles.title}>Search interest</h2>
                   <span className={styles.legend}><i style={{ background: 'var(--text-secondary)' }} /> Observed <i style={{ background: 'var(--accent)', marginLeft: 12 }} /> Forecast</span>
                 </div>
                 <div className={styles.chart}>

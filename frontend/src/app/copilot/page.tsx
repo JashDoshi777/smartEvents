@@ -39,7 +39,7 @@ function inline(text: string, key: string) {
 function Markdown({ text }: { text: string }) {
   const blocks = useMemo(() => {
     const res: React.ReactNode[] = [];
-    const lines = text.split('\n');
+    const lines = text.replace(/[ \t]+\n/g, '\n').split('\n');
     let i = 0, k = 0;
     while (i < lines.length) {
       const l = lines[i];
@@ -208,7 +208,7 @@ export default function CopilotPage() {
               )}
             </AnimatePresence>
           </div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={newChat} disabled={msgs.length === 0} aria-label="New chat"><SquarePen size={14} /> New chat</button>
+          <button type="button" className={styles.newChat} onClick={newChat} disabled={msgs.length === 0} aria-label="New chat"><SquarePen size={16} strokeWidth={1.7} /> New chat</button>
         </div>
 
         <div className={styles.scroll} ref={scrollRef} onScroll={onScroll}>
@@ -231,7 +231,7 @@ export default function CopilotPage() {
                 return (
                   <motion.div key={m.id} style={{ marginTop: firstOfRun && idx ? 8 : 0 }} initial={{ opacity: 0, y: 10, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .28, ease: [0.22, 1, 0.36, 1] }}>
                     <div className={`${styles.row} ${user ? styles.rowUser : ''}`}>
-                      <div className={`${styles.bubble} ${user ? styles.user : styles.ai} ${lastOfRun ? styles.tail : ''} ${m.error && !m.content ? styles.errBubble : ''}`}>
+                      <div data-role={user ? "user" : "assistant"} className={`${styles.bubble} ${user ? styles.user : styles.ai} ${lastOfRun ? styles.tail : ''} ${m.error && !m.content ? styles.errBubble : ''}`}>
                         {user ? m.content : (
                           <>
                             {m.streaming && !m.content ? <span className={styles.dots} aria-label="Copilot is typing"><i /><i /><i /></span> : m.content ? <Markdown text={m.content} /> : null}

@@ -41,6 +41,7 @@ _RULES: list[tuple[re.Pattern, int, int]] = [
     (re.compile(r"^/executive/(kpis|portfolio)$"), 180, 3600),
     (re.compile(r"^/executive/briefing$"), 900, 7200),  # LLM call — expensive
     (re.compile(r"^/recommend/entities$"), 300, 3600),
+    (re.compile(r"^/events$"), 300, 3600),
     (re.compile(r"^/psychology/"), 600, 7200),
     (re.compile(r"^/intelligence/[^/]+/forecast$"), 600, 7200),
     (re.compile(r"^/copilot/models$"), 3600, 86400),
@@ -143,14 +144,17 @@ class ResponseCacheMiddleware:
             status, hdrs, body = await _capture(self.app, scope)
             if status == 200:
                 self._store(key, status, hdrs, body, ttl, swr)
-                entry = _CACHE[key]
-                return await self._reply(send, entry, "MISS")
+                entry = _CACHE.get(key)
+                if entry is not None:
+                    return await self._reply(send, entry, "MISS")
         # Non-200 — pass through uncached.
         await send({"type": "http.response.start", "status": status, "headers": hdrs})
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
     def _store(key, status, hdrs, body, ttl, swr):
+        if b"temporarily unavailable" in body:  # degraded AI fallback — never pin it in cache
+            return
         if len(_CACHE) >= MAX_ENTRIES:
             oldest = min(_CACHE, key=lambda k: _CACHE[k].stale_until)
             _CACHE.pop(oldest, None)

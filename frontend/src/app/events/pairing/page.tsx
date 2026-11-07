@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/States';
 import { Segmented } from '@/components/ui/Controls';
 import { EntityPicker, CityPicker, FormGroup, FormRow, FormHint } from '@/components/intel/Pickers';
+import { CountUp } from '@/components/intel/CountUp';
 import { Ring } from '@/components/intel/Ring';
 import { recommendPairs, type PairRecommendResponse } from '@/lib/api';
 import { inrCompact, num } from '@/lib/format';
@@ -78,13 +79,13 @@ export default function PairingPage() {
             <motion.div className={styles.results} style={{ opacity: busy ? .55 : 1 }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: busy ? .55 : 1, y: 0 }} transition={{ type: 'spring', stiffness: 220, damping: 26 }}>
               <GlassCard className={styles.feature}>
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <span className={styles.eyebrow}>Best pairing for {res.city}</span>
+                  <h2 className={styles.title}>Best pairing for {res.city}</h2>
                   <div className={styles.fNames}><span>{top.entity_a.name}</span><span className={styles.amp}>&amp;</span><span>{top.entity_b.name}</span></div>
                   <div className={styles.sub}>{[top.entity_a.category, top.entity_b.category].filter((c, k, a) => c && a.indexOf(c) === k).join(' · ') || '—'}</div>
                   {top.shared_genres.length > 0 && <div className={styles.genres}>{top.shared_genres.slice(0, 5).map(g => <span key={g} className={styles.genre}>{g}</span>)}</div>}
                   <div className={styles.fee}>{top.combined_booking_fee_estimate != null ? <><b>{inrCompact(top.combined_booking_fee_estimate)}</b> combined fee</> : 'Booking fee not on file'}</div>
                 </div>
-                <Ring value={top.similarity_score} size={112} stroke={11}><div><div className={styles.ringNum}>{Math.round(top.similarity_score)}</div><div className={styles.ringLbl}>match</div></div></Ring>
+                <Ring value={top.similarity_score} size={112} stroke={11}><div><div className={styles.ringNum}><CountUp value={top.similarity_score} /></div><div className={styles.ringLbl}>match</div></div></Ring>
               </GlassCard>
 
               {rest.length > 0 && (

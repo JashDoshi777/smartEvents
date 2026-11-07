@@ -3,12 +3,12 @@
 .err { padding: 12px 14px; border-radius: var(--radius-sm); background: var(--negative-dim); color: var(--negative); font-size: .8125rem; }
 .results { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .feature { padding: 24px 26px; display: flex; gap: 20px; align-items: center; justify-content: space-between; }
-.eyebrow { font-size: .8125rem; font-weight: 600; color: var(--text-secondary); }
+.title { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.015em; }
 .fNames { font: 700 clamp(1.5rem, 3.2vw, 2.25rem)/1.1 ui-rounded, var(--font-sans); letter-spacing: -.035em; margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
 .amp { color: var(--text-tertiary); font-weight: 400; }
 .sub { font-size: .75rem; color: var(--text-tertiary); margin-top: 4px; }
-.genres { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
-.genre { padding: 3px 10px; border-radius: 999px; font-size: .75rem; background: var(--fill-tertiary); color: var(--text-secondary); }
+.genres { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.genre { font-size: .8125rem; color: var(--text-secondary); } .genre + .genre::before { content: '·'; margin-right: 6px; color: var(--text-tertiary); }
 .fee { margin-top: 14px; font-size: .875rem; color: var(--text-secondary); }
 .fee b { font: 650 1.0625rem ui-rounded, var(--font-sans); color: var(--text-primary); }
 .ringNum { font: 700 2rem/1 ui-rounded, var(--font-sans); letter-spacing: -.04em; }

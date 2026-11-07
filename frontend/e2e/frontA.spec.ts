@@ -27,7 +27,7 @@ test.describe('Executive', () => {
     const errors = trackErrors(page);
     await page.goto('/executive');
     await expect(page.getByText('Top ranked acts')).toBeVisible({ timeout: 30000 });
-    await expect(page.getByText('Indian acts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Indian acts · /)).toBeVisible();
     // qa user is a viewer: the backend 403s report export, so the button must not be offered
     await expect(page.getByRole('button', { name: 'Export PDF report' })).toHaveCount(0);
     expect(errors.filter(e => !/ERR_|favicon/.test(e))).toEqual([]);

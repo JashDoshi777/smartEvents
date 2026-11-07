@@ -10,13 +10,14 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/States';
 import { EntityPicker, CityPicker, FormGroup, FormRow, FormHint } from '@/components/intel/Pickers';
+import { CountUp } from '@/components/intel/CountUp';
 import { Ring } from '@/components/intel/Ring';
 import { getCityVenues, getMe, modelEventDeal, type DealModelResponse } from '@/lib/api';
 import { inr, inrCompact, num } from '@/lib/format';
 import styles from './page.module.css';
 
 const ALLOWED = ['executive', 'analyst', 'booker'];
-const riskStyle = (_r: string) => ({ background: 'var(--fill-tertiary)', color: 'var(--text-secondary)' });
+const riskStyle = (_r: string) => ({ color: 'var(--text-secondary)' });
 const riskDot = (r: string) => r === 'Low' ? 'var(--positive)' : r === 'Medium' ? 'var(--warning)' : 'var(--negative)';
 
 function Tip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
@@ -77,7 +78,7 @@ export default function DealModelerPage() {
   const beFill = be?.fill_rate_pct ?? null;
 
   const tone = (n: number) => (n >= 0 ? 'var(--positive)' : 'var(--negative)');
-  const costParts = ex ? [['Artist', ex.artist_fee, 'var(--c1)'], ['Venue', ex.venue_cost, 'var(--c3)'], ['Operations', ex.ops_cost, 'var(--c5)']] as const : [];
+  const costParts = ex ? [['Artist', ex.artist_fee, .85], ['Venue', ex.venue_cost, .5], ['Operations', ex.ops_cost, .22]] as const : [];
   const costTotal = ex?.total_cost || 1;
 
   return (
@@ -122,10 +123,10 @@ export default function DealModelerPage() {
             <motion.div key={res.entity.id + res.inputs.ticket_price + res.venue.capacity} className={styles.bento} style={{ opacity: busy ? .55 : 1 }} initial={{ opacity: 0, y: 14 }} animate={{ opacity: busy ? .55 : 1, y: 0 }} transition={{ type: 'spring', stiffness: 220, damping: 26 }}>
               <GlassCard className={`${styles.hero} ${styles.s8}`}>
                 <div className={styles.heroTop}>
-                  <span className={styles.eyebrow}>{res.entity.name} · {res.venue.name ?? res.venue.city}</span>
+                  <h2 className={styles.title}>{res.entity.name} at {res.venue.name ?? res.venue.city}</h2>
                   <span className={styles.risk} style={riskStyle(res.risk_level)}><i className={styles.dot} style={{ background: riskDot(res.risk_level), marginRight: 6, alignSelf: 'center' }} />{res.risk_level} risk</span>
                 </div>
-                <div className={styles.big} style={{ color: tone(ex?.net_profit ?? 0) }}>{inrCompact(ex?.net_profit)}</div>
+                <div className={styles.big} style={{ color: tone(ex?.net_profit ?? 0) }}>{ex ? <CountUp value={ex.net_profit} format={v => inrCompact(v)} /> : '—'}</div>
                 <div className={styles.bigSub}>expected net profit · {ex?.margin_pct != null ? `${ex.margin_pct}% margin` : '—'}</div>
                 <div className={styles.heroStats}>
                   <div><b>{inrCompact(ex?.gross_revenue)}</b><span>revenue</span></div>
@@ -135,14 +136,14 @@ export default function DealModelerPage() {
               </GlassCard>
 
               <GlassCard className={`${styles.ringCard} ${styles.s4}`} delay={.05}>
-                <Ring value={pred} tick={beFill} size={148} stroke={15} color="var(--accent)">
-                  <div><div className={styles.ringNum}>{pred}<small>%</small></div><div className={styles.ringLbl}>predicted fill</div></div>
+                <Ring value={pred} tick={beFill} size={148} stroke={15} >
+                  <div><div className={styles.ringNum}>{pred}<small>%</small></div><div className={styles.ringLbl}>Predicted fill</div></div>
                 </Ring>
-                <p className={styles.ringNote}>{be?.achievable && be.tickets != null ? <>Break-even at <b style={{ color: 'var(--saffron)' }}>{beFill}%</b> · {num(be.tickets)} tickets</> : 'Break-even not reachable at this price'}</p>
+                <p className={styles.ringNote}>{be?.achievable && be.tickets != null ? <>Break-even at <b>{beFill}%</b> · {num(be.tickets)} tickets</> : 'Break-even not reachable at this price'}</p>
               </GlassCard>
 
               <GlassCard className={`${styles.pad} ${styles.s7}`} delay={.08}>
-                <div className={styles.head}><h2 className="t-headline">Three scenarios</h2><span className="t-footnote text-tertiary">at {inr(res.inputs.ticket_price)} per ticket</span></div>
+                <div className={styles.head}><h2 className={styles.title}>Three scenarios</h2><span className="t-footnote text-tertiary">at {inr(res.inputs.ticket_price)} per ticket</span></div>
                 <div className={styles.chart}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 4, right: 4, left: -6, bottom: 0 }} barGap={4}>
@@ -151,19 +152,19 @@ export default function DealModelerPage() {
                       <YAxis tickFormatter={v => inrCompact(v)} axisLine={false} tickLine={false} width={60} />
                       <Tooltip content={<Tip />} cursor={{ fill: 'var(--fill-quaternary)' }} />
                       <Legend iconType="circle" iconSize={8} />
-                      <Bar dataKey="Revenue" fill="var(--c1)" radius={[7, 7, 2, 2]} animationDuration={700} />
-                      <Bar dataKey="Cost" fill="var(--c3)" radius={[7, 7, 2, 2]} animationDuration={700} />
-                      <Bar dataKey="Profit" fill="var(--text-primary)" fillOpacity={.85} radius={[7, 7, 2, 2]} animationDuration={700} />
+                      <Bar dataKey="Revenue" fill="var(--text-primary)" fillOpacity={.85} radius={[7, 7, 2, 2]} animationDuration={700} />
+                      <Bar dataKey="Cost" fill="var(--text-tertiary)" radius={[7, 7, 2, 2]} animationDuration={700} />
+                      <Bar dataKey="Profit" fill="var(--accent)" radius={[7, 7, 2, 2]} animationDuration={700} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </GlassCard>
 
               <GlassCard className={`${styles.pad} ${styles.s5}`} delay={.11}>
-                <div className={styles.head}><h2 className="t-headline">Where the money goes</h2></div>
-                <div className={styles.stack}>{costParts.map(([l, v, c]) => <motion.i key={l} style={{ background: c }} initial={{ flexGrow: 0 }} animate={{ flexGrow: v }} transition={{ type: 'spring', stiffness: 90, damping: 20 }} />)}</div>
+                <div className={styles.head}><h2 className={styles.title}>Where the money goes</h2></div>
+                <div className={styles.stack}>{costParts.map(([l, v, c]) => <motion.i key={l} style={{ background: 'var(--text-primary)', opacity: c }} initial={{ flexGrow: 0 }} animate={{ flexGrow: v }} transition={{ type: 'spring', stiffness: 90, damping: 20 }} />)}</div>
                 {costParts.map(([l, v, c]) => (
-                  <div key={l} className={styles.costRow}><span><i className={styles.dot} style={{ background: c }} />{l}</span><span><b className="tnum">{inrCompact(v)}</b> <small className="text-tertiary">{Math.round((v / costTotal) * 100)}%</small></span></div>
+                  <div key={l} className={styles.costRow}><span><i className={styles.dot} style={{ background: 'var(--text-primary)', opacity: c }} />{l}</span><span><b className="tnum">{inrCompact(v)}</b> <small className="text-tertiary">{Math.round((v / costTotal) * 100)}%</small></span></div>
                 ))}
                 <p className={styles.note} style={{ marginTop: 8 }}>Artist fee {res.artist_fee.amount_fmt}{res.artist_fee.range_min != null && res.artist_fee.range_max != null ? ` (range ${inrCompact(res.artist_fee.range_min)} to ${inrCompact(res.artist_fee.range_max)})` : ''}</p>
               </GlassCard>

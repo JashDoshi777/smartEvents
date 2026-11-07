@@ -52,16 +52,22 @@ test.describe('copilot', () => {
     expect(errors).toEqual([]);
   });
 
-  test('real backend: a message gets a response or a clean inline error', async ({ page }) => {
+  test('real backend: streams a real answer end-to-end (no mocks)', async ({ page }) => {
+    test.setTimeout(90_000);
     const errors = trackErrors(page);
     await page.goto('/copilot');
-    await page.getByLabel('Message').fill('Say hi in five words');
+    await page.getByLabel('Message').fill('In two short sentences: which Tier-2 Indian city suits a comedy night?');
     await page.getByLabel('Send').click();
-    await expect(page.locator('[class*="bubble"]').nth(1)).toBeVisible();
-    await expect(page.getByLabel('Send')).toBeVisible({ timeout: 40000 });
-    const alert = page.locator('[role=alert]:not(#__next-route-announcer__)');
-    if (await alert.count()) await expect(alert).toContainText(/AI|try again|server/i);
-    expect(errors.filter(e => !/40\d|50\d|Failed to load resource/.test(e))).toEqual([]);
+    // typing indicator or first tokens appear, then the stop button flips back to send
+    await expect(page.getByLabel(/Stop generating/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByLabel('Send')).toBeVisible({ timeout: 60000 });
+    const reply = page.locator('[data-role=assistant]').last();
+    await expect(reply).not.toBeEmpty();
+    expect((await reply.innerText()).length).toBeGreaterThan(20);
+    await expect(page.locator('[role=alert]:not(#__next-route-announcer__)')).toHaveCount(0);
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/copilot-real.png` : undefined });
+    expect(errors).toEqual([]);
   });
 
   test('error recovery: retry button after failure', async ({ page }) => {

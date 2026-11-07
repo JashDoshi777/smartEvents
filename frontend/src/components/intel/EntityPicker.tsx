@@ -8,8 +8,8 @@ import styles from './EntityPicker.module.css';
 export interface PickerEntity { id: string; name: string; category?: string | null; composite_score?: number | null }
 
 /** Searchable single-select for large entity lists (replaces unwieldy native <select>). */
-export function EntityPicker({ entities, value, onChange, placeholder = 'Select an artist or act', loading }: {
-  entities: PickerEntity[]; value: string; onChange: (id: string) => void; placeholder?: string; loading?: boolean;
+export function EntityPicker({ entities, value, onChange, placeholder = 'Select an artist or act', loading, inline }: {
+  entities: PickerEntity[]; value: string; onChange: (id: string) => void; placeholder?: string; loading?: boolean; inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -30,7 +30,7 @@ export function EntityPicker({ entities, value, onChange, placeholder = 'Select 
   }, [entities, q]);
 
   return (
-    <div className={styles.wrap} ref={wrap}>
+    <div className={`${styles.wrap} ${inline ? styles.inline : ''}`} ref={wrap}>
       <button type="button" className={`input ${styles.trigger}`} aria-haspopup="listbox" aria-expanded={open}
         onClick={() => { setOpen(o => !o); setQ(''); }} disabled={loading && !entities.length}>
         {selected ? (

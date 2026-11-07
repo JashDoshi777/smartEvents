@@ -1,8 +1,8 @@
 .wrap { min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
-.card { width: 100%; max-width: 420px; padding: 36px 30px 28px; border-radius: var(--radius-xl) !important; }
+.card { width: 100%; max-width: 420px; padding: 36px 30px 28px; border-radius: 28px !important; }
 .logo { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-bottom: 26px; text-align: center; }
 .logoMark { width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 1.7rem;
-  background: linear-gradient(145deg, var(--accent-hover), var(--accent)); box-shadow: 0 10px 30px var(--accent-dim), inset 0 1px 0 rgba(255,255,255,.35); }
+  background: var(--accent); }
 .form { display: flex; flex-direction: column; gap: 14px; margin-top: 24px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .label { font-size: .8125rem; font-weight: 600; color: var(--text-secondary); padding-left: 4px; }

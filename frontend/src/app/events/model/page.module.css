@@ -8,17 +8,17 @@
 .s4 { grid-column: span 4; } .s5 { grid-column: span 5; } .s7 { grid-column: span 7; } .s8 { grid-column: span 8; } .s12 { grid-column: span 12; }
 .hero { padding: 24px 26px; display: flex; flex-direction: column; }
 .heroTop { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
-.eyebrow { font-size: .8125rem; font-weight: 600; color: var(--text-secondary); }
-.big { font: 700 clamp(3rem, 7vw, 5rem)/1 ui-rounded, var(--font-sans); letter-spacing: -.045em; margin-top: 18px; font-variant-numeric: tabular-nums; }
-.bigSub { color: var(--text-secondary); font-size: .9375rem; margin-top: 6px; }
-.heroStats { display: flex; gap: 28px; flex-wrap: wrap; margin-top: auto; padding-top: 22px; }
+.title { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.015em; }
+.big { font: 700 clamp(3rem, 7vw, 5rem)/1 ui-rounded, var(--font-sans); letter-spacing: -.045em; margin: 22px 0 0; font-variant-numeric: tabular-nums; }
+.bigSub { color: var(--text-secondary); font-size: .9375rem; margin: 6px 0 20px; }
+.heroStats { display: flex; gap: 28px; flex-wrap: wrap; margin-top: auto; padding-top: 18px; border-top: .5px solid var(--divider); }
 .heroStats div { display: flex; flex-direction: column; gap: 2px; }
 .heroStats b { font: 650 1.25rem ui-rounded, var(--font-sans); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .heroStats span { font-size: .75rem; color: var(--text-tertiary); }
 .ringCard { padding: 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
 .ringNum { font: 700 2.25rem/1 ui-rounded, var(--font-sans); letter-spacing: -.04em; }
 .ringNum small { font-size: 1rem; color: var(--text-tertiary); }
-.ringLbl { font-size: .6875rem; color: var(--text-tertiary); margin-top: 3px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.ringLbl { font-size: .6875rem; color: var(--text-tertiary); margin-top: 3px; }
 .ringNote { font-size: .8125rem; color: var(--text-secondary); text-align: center; }
 .pad { padding: 20px; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
@@ -28,12 +28,12 @@
 .costRow { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; font-size: .875rem; }
 .costRow + .costRow { border-top: .5px solid var(--divider); }
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 9px; }
-.risk { display: inline-flex; align-items: center; padding: 3px 12px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+.risk { display: inline-flex; align-items: center; font-size: .8125rem; }
 .note { font-size: .75rem; color: var(--text-tertiary); line-height: 1.55; padding: 0 4px; }
 .listCard { padding: 4px 0; overflow: hidden; }
 .srow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 18px; align-items: center; padding: 14px 20px; font-size: .9375rem; position: relative; }
 .srow + .srow::before { content: ""; position: absolute; top: 0; left: 20px; right: 0; height: .5px; background: var(--divider); }
-.srowOn { background: var(--accent-dim); }
+.srowOn { background: var(--fill-quaternary); }
 .empty { display: grid; place-items: center; min-height: 420px; }
 @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } .form { position: static; } }
 @media (max-width: 760px) { .s4, .s5, .s7, .s8 { grid-column: span 12; } .hero { padding: 20px; } .heroStats { gap: 20px; } .srow { grid-template-columns: minmax(0, 1fr) auto; } .srow > span { display: none; } }

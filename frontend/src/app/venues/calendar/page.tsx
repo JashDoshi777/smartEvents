@@ -106,15 +106,15 @@ export default function VenueCalendarPage() {
       {venuesRes.error && !venuesRes.data ? (
         <GlassCard><ErrorState message="Couldn’t load venues for this city." onRetry={() => venuesRes.mutate()} /></GlassCard>
       ) : venuesRes.data && venues.length === 0 ? (
-        <GlassCard><EmptyState icon={<MapPin size={34} strokeWidth={1.4} />} title={`No venues tracked in ${city}`} message="Pick another city — venues come from the venue database." /></GlassCard>
+        <GlassCard><EmptyState icon={<MapPin size={34} strokeWidth={1.5} />} title={`No venues tracked in ${city}`} message="Pick another city — venues come from the venue database." /></GlassCard>
       ) : (
         <div className={styles.main}>
           <GlassCard className={styles.calCard}>
             <div className={styles.calHead}>
               <h2 className={styles.monthTitle} data-testid="month-title">{MONTH_FMT.format(new Date(Date.UTC(view.y, view.m, 1)))} <span>{view.y}</span></h2>
-              <button className="btn btn-ghost btn-sm" onClick={goToday}>Today</button>
-              <button className="btn btn-icon" aria-label="Previous month" onClick={() => step(-1)}><ChevronLeft size={16} /></button>
-              <button className="btn btn-icon" aria-label="Next month" onClick={() => step(1)}><ChevronRight size={16} /></button>
+              <button className="btn btn-tinted btn-sm" onClick={goToday}>Today</button>
+              <button className="btn btn-icon" aria-label="Previous month" onClick={() => step(-1)}><ChevronLeft size={16} strokeWidth={1.75} /></button>
+              <button className="btn btn-icon" aria-label="Next month" onClick={() => step(1)}><ChevronRight size={16} strokeWidth={1.75} /></button>
             </div>
             <div className={styles.dow}>{DOW.map((d, i) => <span key={d} className={i >= 4 ? styles.dowWknd : ''}>{d}</span>)}</div>
             {cal.isLoading && !cal.data ? (
@@ -140,38 +140,32 @@ export default function VenueCalendarPage() {
               </AnimatePresence>
             )}
             <div className={styles.legend}>
-              <span className={styles.legendItem}><i className={styles.swatch} style={{ background: 'var(--fill-tertiary)' }} /> Weekend (Fri–Sun), no tracked event</span>
-              <span className={styles.legendItem}><i className={styles.swatch} style={{ background: 'var(--accent-dim)' }} /> Booked weekend</span>
+                            <span className={styles.legendItem}><i className={styles.swatch} style={{ background: 'var(--fill-tertiary)' }} /> Booked weekend</span>
               <span className={styles.legendItem}><i className={styles.dot} /> Event</span>
             </div>
             {range && <p className={styles.note}>Data covers {dateIN(range.start)} to {dateIN(range.end)}. Dates outside this window have no tracked data.</p>}
           </GlassCard>
 
           <div className={styles.side}>
-            <div className={styles.tiles}>
-              <GlassCard className={`${styles.tile} ${styles.tileBig}`}>
-                <Ring value={cal.data ? (cal.data.summary.open_weekends / Math.max(1, cal.data.summary.total_weeks)) * 100 : 0} size={88} stroke={10} color="var(--accent)">
-                  <span style={{ fontFamily: ROUNDED, fontSize: '1.25rem', fontWeight: 700 }}>{cal.data ? Math.round((cal.data.summary.open_weekends / Math.max(1, cal.data.summary.total_weeks)) * 100) : '—'}%</span>
-                </Ring>
-                <div><p className="t-headline">Weekends open</p><p className="t-footnote text-tertiary">{cal.data ? `${cal.data.summary.open_weekends} of ${cal.data.summary.total_weeks} weekends have no tracked event` : 'Loading…'}</p></div>
-              </GlassCard>
-              {[{ l: 'Booked weekends', v: cal.data?.summary.booked_weekends, c: 'var(--text-primary)' }, { l: 'Open weekends', v: cal.data?.summary.open_weekends, c: 'var(--text-primary)' }, { l: 'Tracked events', v: cal.data?.summary.total_tracked_events }].map((t, i) => (
-                <GlassCard key={t.l} className={styles.tile} delay={i * 0.04}>
-                  <span className="t-caption text-tertiary">{t.l}</span>
-                  <span className={`${styles.tileVal} tnum`} style={{ color: t.c }}>{t.v != null ? t.v : '—'}</span>
-                </GlassCard>
+            <GlassCard className={styles.summary}>
+              <div className={styles.sumRing}>
+                <Ring value={cal.data ? Math.round((cal.data.summary.open_weekends / Math.max(1, cal.data.summary.total_weeks)) * 100) : 0} size={76} stroke={8} color="var(--text-primary)"><span style={{ fontFamily: ROUNDED, fontSize: '.875rem', fontWeight: 700 }}>{cal.data ? cal.data ? Math.round((cal.data.summary.open_weekends / Math.max(1, cal.data.summary.total_weeks)) * 100) : 0 : '—'}%</span></Ring>
+                <span className={styles.sub}>Weekends<br />open</span>
+              </div>
+              {[{ l: 'Booked', v: cal.data?.summary.booked_weekends }, { l: 'Open', v: cal.data?.summary.open_weekends }, { l: 'Events', v: cal.data?.summary.total_tracked_events }].map(t => (
+                <div key={t.l} className={styles.sumCol}><span className={styles.sumVal}>{t.v != null ? t.v : '—'}</span><span className={styles.sub}>{t.l}</span></div>
               ))}
-            </div>
+            </GlassCard>
             <GlassCard className={styles.card} delay={0.08}>
               <div>
-                <h3 className="t-headline">{venue?.name ?? 'Select a venue'}</h3>
-                <p className="t-footnote text-tertiary">{venue ? `${venue.city} · ${num(venue.capacity)} capacity` : '—'}</p>
+                <h3 className={styles.headline}>{venue?.name ?? 'Select a venue'}</h3>
+                <p className={styles.sub}>{venue ? `${venue.city} · ${num(venue.capacity)} capacity` : '—'}</p>
               </div>
-              <h4 className="t-callout" style={{ fontWeight: 650 }}>Upcoming events</h4>
+              <h4 className={styles.headline} style={{ marginTop: 4 }}>Upcoming events</h4>
               {!cal.data ? <Skeleton height={56} radius={14} /> : upcoming.length === 0 ? (
-                <EmptyState icon={<CalendarDays size={30} strokeWidth={1.4} />} title="No tracked events" message="Every weekend shows as open — this reflects data coverage, not a confirmed availability check." />
+                <EmptyState icon={<CalendarDays size={30} strokeWidth={1.5} />} title="No tracked events" message="Every weekend shows as open — this reflects data coverage, not a confirmed availability check." />
               ) : <div>{upcoming.slice(0, 8).map(e => (
-                <button key={e.id} className={styles.evRow} style={{ width: '100%', textAlign: 'left', background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer' }} onClick={() => { const k = istKey(e.event_date); const [y, m] = k.split('-').map(Number); setView({ y, m: m - 1 }); setSelected(k); }}>
+                <button key={e.id} className={`${styles.evRow} ${styles.evBtn}`} onClick={() => { const k = istKey(e.event_date); const [y, m] = k.split('-').map(Number); setView({ y, m: m - 1 }); setSelected(k); }}>
                   <div className={styles.evDate}><div className={styles.evDay}>{new Date(e.event_date).toLocaleDateString('en-IN', { day: 'numeric', timeZone: IST })}</div><div className={styles.evMon}>{new Date(e.event_date).toLocaleDateString('en-IN', { month: 'short', timeZone: IST })}</div></div>
                   <div style={{ minWidth: 0 }}><p className="t-callout" style={{ fontWeight: 600 }}>{e.title}</p><p className="t-caption text-tertiary">{[e.status, e.source].filter(Boolean).join(' · ') || '—'}</p></div>
                 </button>))}</div>}
@@ -186,7 +180,7 @@ export default function VenueCalendarPage() {
       <Sheet open={!!selected} onClose={() => setSelected(null)} title={selected ? dateIN(selected, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : ''}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }} data-testid="day-sheet">
           {selEvents.length === 0 ? (
-            <EmptyState icon={<CalendarDays size={30} strokeWidth={1.4} />} title="No tracked events" message={selected && range && (selected < range.start || selected > range.end) ? 'This date is outside the tracked window.' : `${venue?.name ?? 'This venue'} has no tracked event on this day.`} />
+            <EmptyState icon={<CalendarDays size={30} strokeWidth={1.5} />} title="No tracked events" message={selected && range && (selected < range.start || selected > range.end) ? 'This date is outside the tracked window.' : `${venue?.name ?? 'This venue'} has no tracked event on this day.`} />
           ) : selEvents.map(e => (
             <div key={e.id} className={styles.sheetEv}>
               <p className="t-callout" style={{ fontWeight: 650 }}>{e.title}</p>

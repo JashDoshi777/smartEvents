@@ -94,6 +94,8 @@ class Entity(Base):
     # never-scored-first priority check, silently deprioritizing real
     # composite_score computation for entities social_listening happened
     # to reach first. Each worker now owns its own timestamp column.
+    # Per-field source/QID/retrieval-date provenance for enriched data
+    data_provenance = Column(JSONB)
     last_social_listened_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
