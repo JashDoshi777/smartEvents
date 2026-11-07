@@ -54,6 +54,7 @@ async def get_current_user(
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is not None and user.is_active:
+        db.expunge(user)  # detach with all columns loaded: safe to reuse across requests
         _USER_CACHE[user_id] = (time.monotonic() + _USER_TTL, user)
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or deactivated", headers={"WWW-Authenticate": "Bearer"})

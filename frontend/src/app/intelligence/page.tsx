@@ -301,7 +301,7 @@ function Hub() {
 
         <div className={styles.panelPane}>
           {selected && !isMobile ? (
-            <GlassCard className={styles.panel} style={{ padding: 0 }}>{detail}</GlassCard>
+            <GlassCard className={styles.shell}>{detail}</GlassCard>
           ) : (
             <GlassCard className={styles.empty}>
               <Brain size={38} strokeWidth={1.4} />
@@ -312,7 +312,7 @@ function Hub() {
         </div>
       </div>
 
-      {isMobile && selected && !compareMode && <Sheet open onClose={() => setSelectedId(null)} title={selected.name}>{detail}</Sheet>}
+      {isMobile && selected && !compareMode && <Sheet open onClose={() => setSelectedId(null)} title="Details">{detail}</Sheet>}
       {compareMode && cmp.length > 0 && (
         <motion.div className={styles.compareBar} initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>
           <span className="t-callout" style={{ fontWeight: 600 }}>{cmp.length} selected</span>

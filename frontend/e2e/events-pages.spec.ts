@@ -8,10 +8,10 @@ test.describe('events pages', () => {
   test('fill-rate monitor renders real events without errors', async ({ page }) => {
     const errors = trackErrors(page);
     await page.goto('/events');
-    await expect(page.getByRole('heading', { name: 'Events on record' })).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Events on record')).toBeVisible({ timeout: 20000 });
     await expect(page.getByText('Events tracked')).toBeVisible();
-    await expect(page.locator('table.table tbody tr').first()).toBeVisible();
-    await expect(page.locator('table.table').getByText('₹').first()).toBeVisible();
+    await expect(page.getByText(/^₹[\d,]+$/).first()).toBeVisible();
+    await expect(page.getByText('City demand')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
   });
@@ -36,7 +36,7 @@ test.describe('events pages', () => {
     await page.fill('#m-cap', '9000');
     await page.fill('#m-price', '2500');
     await page.getByRole('button', { name: 'Run simulation' }).click();
-    await expect(page.getByText('Expected revenue')).toBeVisible();
+    await expect(page.getByText('expected net profit')).toBeVisible();
     await expect(page.getByText('₹1.8 Cr').first()).toBeVisible();
     await expect(page.getByText('Medium risk')).toBeVisible();
     await page.waitForTimeout(1200);
@@ -54,11 +54,11 @@ test.describe('events pages', () => {
   test('pairing returns real recommendations or a clean message', async ({ page }) => {
     const errors = trackErrors(page);
     await page.goto('/events/pairing');
-    await expect(page.getByText(/pairings for Mumbai|Not enough|unavailable/)).toBeVisible({ timeout: 40000 });
+    await expect(page.getByText(/Best pairing for Mumbai|Not enough|unavailable/)).toBeVisible({ timeout: 40000 });
     await expect(page.locator('text=&').first()).toBeVisible();
-    await page.getByRole('button', { name: 'All markets' }).click();
+    await page.getByRole('button', { name: 'All', exact: true }).click();
     await page.getByRole('button', { name: 'Find pairings' }).click();
-    await expect(page.getByText(/pairings for Mumbai/)).toBeVisible({ timeout: 40000 });
+    await expect(page.getByText(/Best pairing for Mumbai/)).toBeVisible({ timeout: 40000 });
     expect(errors).toEqual([]);
   });
 });

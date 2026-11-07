@@ -16,17 +16,19 @@
   --bg-grouped:    #0b0b0d;
 
   /* Ambient backdrop blobs (see body::before) */
-  --amb-1: rgba(10, 132, 255, 0.07);
-  --amb-2: rgba(255, 255, 255, 0.025);
-  --amb-3: rgba(255, 255, 255, 0.015);
+  --amb-1: transparent;
+  --amb-2: transparent;
+  --amb-3: transparent;
 
   /* Glass */
-  --glass-fill:         rgba(28, 28, 30, 0.72);
-  --glass-fill-hover:   rgba(36, 36, 38, 0.8);
+  --glass-fill:         #1c1c1e;
+  --glass-fill-hover:   #232326;
   --glass-fill-strong:  rgba(28, 28, 30, 0.78);
-  --glass-border:       rgba(255, 255, 255, 0.07);
+  --glass-border:       rgba(255, 255, 255, 0.05);
   --glass-border-hover: rgba(255, 255, 255, 0.18);
-  --glass-blur:         blur(30px) saturate(190%);
+  --glass-blur:         none;            /* content cards are solid — Apple only blurs chrome */
+  --chrome-blur:        blur(28px) saturate(180%);
+  --chrome-fill:        rgba(22, 22, 24, 0.72);
   --glass-shadow:       0 1px 0 rgba(255,255,255,0.06) inset, 0 10px 40px rgba(0,0,0,0.45);
   --glass-shadow-hover: 0 1px 0 rgba(255,255,255,0.10) inset, 0 18px 56px rgba(0,0,0,0.55);
 
@@ -98,9 +100,12 @@
   --amb-2: rgba(255, 149, 0, 0.12);
   --amb-3: rgba(52, 199, 89, 0.10);
 
-  --glass-fill:         rgba(255, 255, 255, 0.72);
-  --glass-fill-hover:   rgba(255, 255, 255, 0.92);
+  --glass-fill:         #ffffff;
+  --glass-fill-hover:   #fafafc;
   --glass-fill-strong:  rgba(255, 255, 255, 0.86);
+  --chrome-fill:        rgba(249, 249, 251, 0.78);
+  --chrome-blur:        blur(28px) saturate(180%);
+  --glass-blur:         none;
   --glass-border:       rgba(60, 60, 67, 0.10);
   --glass-border-hover: rgba(60, 60, 67, 0.20);
   --glass-shadow:       0 1px 0 rgba(255,255,255,0.9) inset, 0 1px 2px rgba(0,0,0,0.04), 0 8px 30px rgba(0,0,0,0.06);
@@ -136,7 +141,7 @@
     color-scheme: light;
     --bg-base: #f2f2f7; --bg-elevated: #fff; --bg-overlay: #f2f2f7; --bg-subtle: #e5e5ea; --bg-grouped: #f2f2f7;
     --amb-1: rgba(10,132,255,.16); --amb-2: rgba(255,149,0,.12); --amb-3: rgba(52,199,89,.10);
-    --glass-fill: rgba(255,255,255,.72); --glass-fill-hover: rgba(255,255,255,.92); --glass-fill-strong: rgba(255,255,255,.86);
+    --glass-fill: #fff; --glass-fill-hover: #fafafc; --chrome-fill: rgba(249,249,251,.78); --chrome-blur: blur(28px) saturate(180%); --glass-blur: none; --glass-fill-strong: rgba(255,255,255,.86);
     --glass-border: rgba(60,60,67,.10); --glass-border-hover: rgba(60,60,67,.20);
     --glass-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 1px 2px rgba(0,0,0,.04), 0 8px 30px rgba(0,0,0,.06);
     --glass-shadow-hover: 0 1px 0 #fff inset, 0 2px 4px rgba(0,0,0,.05), 0 16px 44px rgba(0,0,0,.10);
@@ -683,7 +688,7 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 /* Data table */
 .table { width: 100%; border-collapse: collapse; }
 .table th { text-align: left; font: 600 .6875rem var(--font-sans); letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-tertiary); padding: 10px 14px; border-bottom: .5px solid var(--divider); position: sticky; top: 0; background: var(--glass-fill-strong); backdrop-filter: var(--glass-blur); }
+  color: var(--text-tertiary); padding: 10px 14px; border-bottom: .5px solid var(--divider); position: sticky; top: 0; background: var(--glass-fill-strong); backdrop-filter: var(--chrome-blur); }
 .table td { padding: 12px 14px; border-bottom: .5px solid var(--divider); font-size: .875rem; }
 .table tbody tr { transition: background var(--duration-fast); }
 .table tbody tr:hover { background: var(--fill-quaternary); }
@@ -697,7 +702,7 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 /* Toasts */
 .toast-stack { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 400; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
 .toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-radius: var(--radius-full);
-  background: var(--glass-fill-strong); border: 1px solid var(--glass-border); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--glass-fill-strong); border: 1px solid var(--glass-border); backdrop-filter: var(--chrome-blur); -webkit-backdrop-filter: var(--chrome-blur);
   box-shadow: var(--glass-shadow-hover); font-size: .875rem; font-weight: 500; animation: toastIn var(--duration-base) var(--ease-spring); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }
 
@@ -705,8 +710,8 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.38); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   display: flex; align-items: flex-end; justify-content: center; animation: fadeIn var(--duration-base) var(--ease-out); }
 @media (min-width: 700px) { .sheet-backdrop { align-items: center; } }
-.sheet { width: min(560px, 100%); max-height: 88vh; overflow: auto; background: var(--glass-fill-strong); border: 1px solid var(--glass-border);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border-radius: var(--radius-xl) var(--radius-xl) 0 0; padding: 22px;
+.sheet { width: min(560px, 100%); max-height: 88vh; overflow: auto; background: var(--bg-elevated); border: 1px solid var(--glass-border);
+  backdrop-filter: var(--chrome-blur); -webkit-backdrop-filter: var(--chrome-blur); border-radius: var(--radius-xl) var(--radius-xl) 0 0; padding: 22px;
   box-shadow: 0 -10px 60px rgba(0,0,0,.35); animation: sheetIn var(--duration-slow) var(--ease-out); }
 @media (min-width: 700px) { .sheet { border-radius: var(--radius-xl); } }
 @keyframes sheetIn { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -727,3 +732,27 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 .recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line { display: none; }
 .recharts-text { fill: var(--text-tertiary) !important; font-size: 11px !important; font-weight: 500; }
 .recharts-bar-rectangle path, .recharts-rectangle { rx: 6; }
+
+/* ── Apple craft pass ── */
+html { scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+body { font-size: 15px; line-height: 1.4; }
+.glass-card { background: var(--glass-fill); border: 0; border-radius: 20px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.glass-card:hover { background: var(--glass-fill); box-shadow: none; }
+:root[data-theme="light"] .glass-card { box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.glass-card-interactive { transition: transform var(--duration-base) var(--ease-out), background var(--duration-fast); }
+.glass-card-interactive:hover { background: var(--glass-fill-hover); transform: none; }
+.glass-card-interactive:active { transform: scale(.985); }
+button, a, [role="button"], .chip, .seg > button { -webkit-user-select: none; user-select: none; }
+button:not(:disabled):active, a.list-row:active { transition: transform 120ms var(--ease-out); }
+button:not(:disabled):not(.seg > button):not(.switch):active { transform: scale(.97); }
+::-webkit-scrollbar { width: 0; height: 0; }   /* iOS: scroll indicators only appear while scrolling */
+* { scrollbar-width: none; }
+.list-group { border: 0; background: var(--glass-fill); backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: none; border-radius: 20px; }
+:root[data-theme="light"] .list-group { box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.table th { background: var(--glass-fill); }
+@media (prefers-reduced-motion: no-preference) {
+  main > div > div > * { animation: itemIn 480ms var(--ease-out) both; }
+  main > div > div > *:nth-child(2) { animation-delay: 40ms; } main > div > div > *:nth-child(3) { animation-delay: 80ms; }
+  main > div > div > *:nth-child(4) { animation-delay: 120ms; } main > div > div > *:nth-child(n+5) { animation-delay: 160ms; }
+}
+@keyframes itemIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }

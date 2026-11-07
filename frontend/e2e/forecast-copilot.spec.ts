@@ -43,7 +43,7 @@ test.describe('copilot', () => {
     const errors = trackErrors(page);
     await page.route('**/copilot/stream', r => r.fulfill({ contentType: 'text/event-stream', body: sseBody(['**Nagpur** looks strong.\n\n', '- Tier-2, ', '- ₹1,800 avg ticket']) }));
     await page.goto('/copilot');
-    await expect(page.getByText('How can I help?')).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText('Ask about the Indian live-events market')).toBeVisible({ timeout: 20000 });
     await page.getByRole('button', { name: /Tier-2 city should District/ }).click();
     await expect(page.locator('strong', { hasText: 'Nagpur' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('₹1,800 avg ticket')).toBeVisible();

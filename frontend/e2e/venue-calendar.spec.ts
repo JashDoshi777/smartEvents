@@ -34,8 +34,9 @@ test.describe('Venue calendar', () => {
       summary: { total_weeks: 1, booked_weekends: 0, open_weekends: 1, total_tracked_events: 0 }, data_note: 'note',
     } }));
     await page.goto('/venues/calendar');
-    await expect(page.getByText('Mock Gig').first()).toBeVisible({ timeout: 25_000 });
-    await page.locator('[role=gridcell][aria-label*="1 event"]').first().click();
+    const cell = page.locator('[role=gridcell][aria-label*="1 event"]').first();
+    await expect(cell).toBeVisible({ timeout: 25_000 });
+    await cell.click();
     await expect(page.getByTestId('day-sheet')).toContainText('Mock Gig');
   });
 });

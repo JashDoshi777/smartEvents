@@ -4,8 +4,8 @@
   border-radius: 28px;
   display: flex; flex-direction: column;
   padding: 14px 10px 12px;
-  background: var(--glass-fill-strong);
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--chrome-fill);
+  backdrop-filter: var(--chrome-blur); -webkit-backdrop-filter: var(--chrome-blur);
   border: .5px solid var(--glass-border);
   box-shadow: 0 10px 40px rgba(0,0,0,.18), var(--glass-shadow);
   transition: width var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
@@ -27,7 +27,7 @@
 .nav { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 14px; padding: 2px 0 8px; scrollbar-width: none; }
 .nav::-webkit-scrollbar { display: none; }
 .group { display: flex; flex-direction: column; gap: 2px; }
-.groupTitle { font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-tertiary); padding: 0 12px 4px; }
+.groupTitle { font-size: .75rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text-tertiary); padding: 0 12px 4px; }
 .groupRule { height: .5px; background: var(--divider); margin: 0 14px 4px; }
 
 .navItem {
@@ -39,8 +39,9 @@
 .collapsed .navItem { justify-content: center; padding: 0; }
 .navItem:hover { color: var(--text-primary); background: var(--fill-quaternary); }
 .navItem:active { transform: scale(.98); }
-.activePill { position: absolute; inset: 0; border-radius: 10px; background: var(--accent-dim); }
-.active { color: var(--accent); font-weight: 600; }
+.activePill { position: absolute; inset: 0; border-radius: 10px; background: var(--fill-tertiary); }
+.active { color: var(--text-primary); font-weight: 600; }
+.active .navIcon { color: var(--accent); }
 .active:hover { background: transparent; }
 .navIcon { position: relative; flex-shrink: 0; }
 .navLabel { position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

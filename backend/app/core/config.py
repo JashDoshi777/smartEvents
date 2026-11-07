@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     # Best versatile model: llama-3.3-70b-versatile (128K context, fast)
     # Alternative (most capable): moonshotai/kimi-k2-instruct
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
     # Keep Gemini as optional fallback
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-1.5-pro"

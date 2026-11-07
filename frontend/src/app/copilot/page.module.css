@@ -15,12 +15,8 @@
 .user { background: var(--accent); color: #fff; white-space: pre-wrap; }
 .ai { background: var(--fill-tertiary); color: var(--text-primary); }
 .errBubble { background: var(--fill-tertiary); }
-.tail::after { content: ""; position: absolute; bottom: 0; width: 17px; height: 15px; background: inherit; }
-.user.tail::after { right: -6px; border-bottom-left-radius: 15px 12px; }
-.ai.tail::after { left: -6px; border-bottom-right-radius: 15px 12px; }
-.user.tail::before, .ai.tail::before { content: ""; position: absolute; bottom: 0; width: 10px; height: 15px; background: var(--bg-base); z-index: 1; }
-.user.tail::before { right: -10px; border-bottom-left-radius: 8px; }
-.ai.tail::before { left: -10px; border-bottom-right-radius: 8px; }
+.user.tail { border-bottom-right-radius: 5px; }
+.ai.tail { border-bottom-left-radius: 5px; }
 .stamp { text-align: center; font-size: .6875rem; font-weight: 500; color: var(--text-tertiary); margin: 4px 0 10px; }
 .md p + p, .md ul + p, .md ol + p, .md p + ul, .md p + ol, .md h4 + p { margin-top: 8px; }
 .md ul, .md ol { padding-left: 20px; margin: 6px 0; }
@@ -46,7 +42,7 @@
 .suggBtn svg { color: var(--text-tertiary); flex-shrink: 0; }
 .suggBtn:hover { background: var(--fill-quaternary); }
 .suggBtn:active { background: var(--fill-tertiary); }
-.composer { padding: 10px clamp(16px, 2.4vw, 32px) calc(12px + env(safe-area-inset-bottom, 0px)); background: var(--bg-base); }
+.composer { padding: 10px clamp(16px, 2.4vw, 32px) calc(12px + env(safe-area-inset-bottom, 0px)); background: transparent; }
 .composerIn { max-width: 760px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px; padding: 6px 6px 6px 16px; border-radius: 22px; background: transparent; border: 1px solid var(--divider-strong); }
 .composerIn:focus-within { border-color: var(--text-tertiary); }
 .composerIn textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 1rem; line-height: 1.4; padding: 9px 0; max-height: 140px; min-height: 22px; }
@@ -57,3 +53,4 @@
 .stop { background: var(--text-primary); color: var(--bg-base); }
 .foot { max-width: 760px; margin: 6px auto 0; text-align: center; font-size: .6875rem; color: var(--text-tertiary); }
 @media (max-width: 640px) { .bubble { max-width: 84%; } .welcome { margin-top: 1vh; } }
+@media (max-width: 900px) { .composer { padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px)); } .foot { display: none; } }

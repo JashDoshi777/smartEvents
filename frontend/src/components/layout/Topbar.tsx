@@ -124,6 +124,10 @@ function SearchTrigger() {
 interface TopbarProps {
   title: string;
   subtitle?: string;
+  /** Show the inline title (fill/split pages, or once the large title scrolls away). */
+  showTitle?: boolean;
+  /** Bar gets its translucent material + hairline (true once content scrolls under it). */
+  raised?: boolean;
 }
 
 function UserMenu() {
@@ -170,18 +174,18 @@ function UserMenu() {
   );
 }
 
-export function Topbar({ title, subtitle }: TopbarProps) {
+export function Topbar({ title, subtitle, showTitle = true, raised = true }: TopbarProps) {
   const { theme, toggle } = useTheme();
   const { scope, setScope } = useMarketScope();
   const { openMenu } = useShell();
 
   return (
-    <header className={styles.topbar}>
+    <header className={`${styles.topbar} ${raised ? styles.raised : ''}`}>
       <div className={styles.left}>
         <button className={styles.menuBtn} onClick={openMenu} aria-label="Open menu"><Menu size={18} /></button>
-        <div className={styles.titles}>
-          <h1 className={styles.title}>{title}</h1>
-          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+        <div className={`${styles.titles} ${showTitle ? styles.titleIn : ''}`}>
+          <span className={styles.title} role="heading" aria-level={showTitle ? 1 : undefined}>{title}</span>
+          {subtitle && showTitle && <p className={styles.subtitle}>{subtitle}</p>}
         </div>
       </div>
 

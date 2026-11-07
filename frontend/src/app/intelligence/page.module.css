@@ -35,6 +35,7 @@
 .check { width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--divider-strong); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #fff; }
 .check[data-on="true"] { background: var(--accent); border-color: var(--accent); }
 
+.shell { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0 !important; }
 .panel { flex: 1; min-height: 0; overflow-y: auto; padding: 20px !important; display: flex; flex-direction: column; gap: 20px; scrollbar-width: thin; scrollbar-color: var(--divider) transparent; }
 .pHead { display: flex; align-items: center; gap: 14px; }
 .pAvatar { width: 52px; height: 52px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff;
@@ -74,3 +75,4 @@
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; } .stat:nth-child(3)::before { display: none; }
   .scoreCol { width: 64px; }
 }
+.actions a.btn, .actions a.btn:hover { text-decoration: none; }

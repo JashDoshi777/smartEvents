@@ -42,7 +42,7 @@ export default function ForecastPage() {
   const [months, setMonths] = useState('3');
 
   const { data: portfolio } = useSWR('portfolio/picker', () => getPortfolio());
-  const quick = useMemo(() => (portfolio?.portfolio ?? []).filter(e => !e.is_international && e.google_trend_score != null).slice(0, 5), [portfolio]);
+  const quick = useMemo(() => (portfolio?.portfolio ?? []).filter(e => !e.is_international && e.type === 'artist' && e.google_trend_score != null).slice(0, 4), [portfolio]);
 
   const { data, error, isLoading, isValidating, mutate } = useSWR<DemandForecastResponse>(
     entityId ? `forecast/${entityId}/${months}` : null,
@@ -99,7 +99,7 @@ export default function ForecastPage() {
                 <>
                   <div className={styles.big}>{last.predicted_trend_score.toFixed(0)}</div>
                   <div className={styles.bigSub}>projected interest in {months} month{months === '1' ? '' : 's'}</div>
-                  <div className={styles.trendLine} style={{ color: dirColor }}><DirIcon size={16} /> <span>{dir}</span><span className="text-tertiary"> · range {last.lower_bound.toFixed(0)} to {last.upper_bound.toFixed(0)}</span></div>
+                  <div className={styles.trendLine} style={{ color: dirColor }}><DirIcon size={16} /> <span>{dir}</span><span className="text-tertiary" style={{ textTransform: 'none', fontWeight: 400 }}> · range {last.lower_bound.toFixed(0)} to {last.upper_bound.toFixed(0)}</span></div>
                 </>
               ) : (
                 <>

@@ -138,13 +138,16 @@ async def stream_completion(
 
     logger.info("Groq stream request", model=model)
 
-    async with client.chat.completions.stream(
+    stream = await client.chat.completions.create(
         model=model,
         messages=full_messages,
         temperature=temperature,
         max_tokens=max_tokens,
-    ) as stream:
-        async for text in stream.text_stream:
+        stream=True,
+    )
+    async for chunk in stream:
+        text = chunk.choices[0].delta.content if chunk.choices else None
+        if text:
             yield text
 
 

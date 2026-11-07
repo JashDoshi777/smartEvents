@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.models.city import City
+from app.core.config import settings
 from app.services.latest_metric import latest_metric
 from app.api.deps import get_current_user, require_roles
 from app.models.user import User, UserRole
@@ -212,7 +213,7 @@ Instructions:
         "data_context": {
             "entities_analyzed": len(top_entities),
             "active_cities": len(active_cities),
-            "model": "llama-3.3-70b-versatile",
+            "model": settings.GROQ_MODEL,
         },
     }
 

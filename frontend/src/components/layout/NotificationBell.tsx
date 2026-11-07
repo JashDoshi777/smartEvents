@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import useSWR, { mutate } from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, Info, TrendingUp, Flame, CheckCheck, Star } from 'lucide-react';
 import { getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, NotificationItem } from '@/lib/api';
@@ -59,6 +59,7 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const { mutate } = useSWRConfig(); // bound to the provider cache in lib/swr.tsx
   const { data: countData } = useSWR('notifications/unread-count', getUnreadCount, {
     refreshInterval: 60000,
     shouldRetryOnError: false,
