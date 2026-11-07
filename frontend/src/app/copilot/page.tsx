@@ -1,253 +1,270 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Brain, Zap, ChevronRight } from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import useSWR from 'swr';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ArrowUp, Check, ChevronDown, ChevronRight, RotateCcw, Sparkles, Square, SquarePen } from 'lucide-react';
+import { Page } from '@/components/ui/Page';
+import { getAccessToken, getCopilotModels } from '@/lib/api';
 import styles from './page.module.css';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+interface Msg { id: number; role: 'user' | 'assistant'; content: string; ts: number; error?: string; streaming?: boolean }
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  ts: Date;
-  isLoading?: boolean;
-}
-
-// ── Suggested queries ─────────────────────────────────────────────────────────
-
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const SUGGESTIONS = [
-  'Which artist should we sign for Mumbai next quarter?',
-  'What are the best expansion cities for EDM acts?',
-  'Compare Diljit vs AP Dhillon for Delhi market',
-  'Which Tier-2 cities have untapped demand?',
-  'What is a fair ticket price for a 15,000 seat show?',
-  'Who are the breakout artists under ₹30L guarantee?',
+  'Which Tier-2 city should District expand to next?',
+  'Which Indian artists are breaking out right now?',
+  'What is a fair ticket price for a 5,000-seat Bengaluru indie show?',
+  'Compare Mumbai and Delhi NCR for live comedy demand',
+  'How should we plan around monsoon season for outdoor events?',
+  'Which acts could headline an IPL-week concert in Hyderabad?',
 ];
 
-// ── Message bubble ────────────────────────────────────────────────────────────
-
-function Bubble({ msg }: { msg: Message }) {
-  const isUser = msg.role === 'user';
-  return (
-    <motion.div
-      className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleAssistant}`}
-      initial={{ opacity: 0, y: 10, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
-    >
-      {!isUser && (
-        <div className={styles.aiAvatar}>
-          <Brain size={14} />
-        </div>
-      )}
-      <div className={`${styles.bubbleContent} ${isUser ? styles.bubbleContentUser : styles.bubbleContentAI}`}>
-        {msg.isLoading ? (
-          <div className={styles.typingDots}>
-            <span /><span /><span />
-          </div>
-        ) : (
-          <p className="t-callout" style={{ lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{msg.content}</p>
-        )}
-        <span className={styles.bubbleTime}>
-          {msg.ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </span>
-      </div>
-    </motion.div>
-  );
+/* ── markdown-lite (safe: builds React nodes, never raw HTML) ── */
+function inline(text: string, key: string) {
+  const out: React.ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*)/g;
+  let last = 0, m: RegExpExecArray | null, i = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith('**')) out.push(<strong key={`${key}b${i}`}>{t.slice(2, -2)}</strong>);
+    else if (t.startsWith('`')) out.push(<code key={`${key}c${i}`}>{t.slice(1, -1)}</code>);
+    else out.push(<em key={`${key}e${i}`}>{t.slice(1, -1)}</em>);
+    last = m.index + t.length; i++;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+function Markdown({ text }: { text: string }) {
+  const blocks = useMemo(() => {
+    const res: React.ReactNode[] = [];
+    const lines = text.split('\n');
+    let i = 0, k = 0;
+    while (i < lines.length) {
+      const l = lines[i];
+      if (/^```/.test(l)) {
+        const buf: string[] = []; i++;
+        while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+        i++; res.push(<pre key={k++}>{buf.join('\n')}</pre>); continue;
+      }
+      if (/^\s*[-*•]\s+/.test(l)) {
+        const items: string[] = [];
+        while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*[-*•]\s+/, ''));
+        res.push(<ul key={k++}>{items.map((t, j) => <li key={j}>{inline(t, `u${k}${j}`)}</li>)}</ul>); continue;
+      }
+      if (/^\s*\d+[.)]\s+/.test(l)) {
+        const items: string[] = [];
+        while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*\d+[.)]\s+/, ''));
+        res.push(<ol key={k++}>{items.map((t, j) => <li key={j}>{inline(t, `o${k}${j}`)}</li>)}</ol>); continue;
+      }
+      if (/^#{1,4}\s+/.test(l)) { res.push(<h4 key={k++}>{inline(l.replace(/^#{1,4}\s+/, ''), `h${k}`)}</h4>); i++; continue; }
+      if (!l.trim()) { i++; continue; }
+      const buf: string[] = [];
+      while (i < lines.length && lines[i].trim() && !/^(```|\s*[-*•]\s+|\s*\d+[.)]\s+|#{1,4}\s+)/.test(lines[i])) buf.push(lines[i++]);
+      res.push(<p key={k++}>{buf.map((t, j) => <Fragment key={j}>{j > 0 && <br />}{inline(t, `p${k}${j}`)}</Fragment>)}</p>);
+    }
+    return res;
+  }, [text]);
+  return <div className={styles.md}>{blocks}</div>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// AI Copilot Page
-// ═══════════════════════════════════════════════════════════════════════════════
+const time = (t: number) => new Date(t).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 
 export default function CopilotPage() {
-  const [messages,  setMessages]  = useState<Message[]>([]);
-  const [input,     setInput]     = useState('');
-  const [loading,   setLoading]   = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef  = useRef<HTMLTextAreaElement>(null);
+  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [model, setModel] = useState('');
+  const [menu, setMenu] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const idRef = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const { data: models } = useSWR('copilot/models', getCopilotModels, { shouldRetryOnError: false });
+  const active = models?.available_models.find(m => m.id === (model || models.current_model));
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (!menu) return;
+    const close = (e: PointerEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenu(false); };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [menu]);
 
-  async function send(text: string) {
-    if (!text.trim() || loading) return;
+  // auto-scroll while the user is at the bottom
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [msgs]);
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
 
-    const userMsg: Message = { role: 'user', content: text.trim(), ts: new Date() };
-    const loadingMsg: Message = { role: 'assistant', content: '', ts: new Date(), isLoading: true };
+  useEffect(() => () => abortRef.current?.abort(), []);
 
-    setMessages(prev => [...prev, userMsg, loadingMsg]);
-    setInput('');
-    setLoading(true);
+  const patch = useCallback((id: number, p: Partial<Msg> | ((m: Msg) => Partial<Msg>)) =>
+    setMsgs(list => list.map(m => m.id === id ? { ...m, ...(typeof p === 'function' ? p(m) : p) } : m)), []);
 
+  const run = useCallback(async (history: Msg[]) => {
+    const aid = ++idRef.current;
+    setMsgs([...history, { id: aid, role: 'assistant', content: '', ts: Date.now(), streaming: true }]);
+    stick.current = true;
+    setBusy(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const payload = {
+      messages: history.filter(m => !m.error).slice(-12).map(m => ({ role: m.role, content: m.content.slice(0, 7900) })),
+      model: model || undefined, max_tokens: 1024,
+    };
+    const headers = { 'Content-Type': 'application/json', ...(getAccessToken() ? { Authorization: `Bearer ${getAccessToken()}` } : {}) };
+    let got = '';
+    const fail = (msg: string) => patch(aid, { streaming: false, error: msg });
     try {
-      const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
-      const res = await fetch(`${BASE}/copilot/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text.trim() }),
-      });
-
-      let content: string;
-      if (!res.ok) {
-        content = `Error ${res.status}: Could not reach the AI Copilot. Make sure the FastAPI backend is running and your Groq API key is set in backend/.env.`;
-      } else {
-        const data = await res.json();
-        content = data.response ?? data.message ?? JSON.stringify(data);
+      let streamErr: string | null = null;
+      const res = await fetch(`${BASE}/copilot/stream`, { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
+      if (res.status === 401) throw new Error('Your session expired. Please sign in again.');
+      if (res.status === 503) throw new Error('The AI Copilot isn’t configured on this server yet.');
+      if (!res.ok || !res.body) streamErr = `stream ${res.status}`;
+      else {
+        const reader = res.body.getReader(), dec = new TextDecoder();
+        let buf = '', done = false;
+        while (!done) {
+          const { value, done: d } = await reader.read();
+          if (d) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split('\n\n'); buf = parts.pop() ?? '';
+          for (const part of parts) {
+            const line = part.split('\n').find(l => l.startsWith('data:'));
+            if (!line) continue;
+            const data = line.slice(5).trim();
+            if (data === '[DONE]') { done = true; break; }
+            try {
+              const j = JSON.parse(data);
+              if (j.error) { streamErr = String(j.error); done = true; break; }
+              if (j.chunk) { got += j.chunk; const snap = got; patch(aid, { content: snap }); }
+            } catch { /* partial frame */ }
+          }
+        }
       }
+      if (streamErr && !got) {
+        // streaming unavailable: fall back to the single-shot endpoint and reveal it progressively
+        const r = await fetch(`${BASE}/copilot/chat`, { method: 'POST', headers, body: JSON.stringify(payload), signal: ac.signal });
+        if (!r.ok) throw new Error(r.status === 503 ? 'The AI Copilot isn’t configured on this server yet.' : 'The AI service is not responding right now. Please try again in a moment.');
+        const { response } = await r.json() as { response: string };
+        for (let i = 0; i < response.length; i += 6) {
+          if (ac.signal.aborted) break;
+          patch(aid, { content: response.slice(0, i + 6) });
+          await new Promise(r2 => setTimeout(r2, 12));
+        }
+        got = response;
+      } else if (streamErr && got) {
+        patch(aid, { streaming: false, error: 'The response was interrupted.' }); return;
+      }
+      patch(aid, { streaming: false, content: got });
+    } catch (e) {
+      if (ac.signal.aborted) { patch(aid, m => ({ streaming: false, content: m.content || '', error: m.content ? undefined : 'Stopped.' })); return; }
+      fail(e instanceof Error && !/fetch|network|Failed/i.test(e.message) ? e.message : 'Couldn’t reach the server. Check your connection and try again.');
+    } finally { setBusy(false); abortRef.current = null; }
+  }, [model, patch]);
 
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = { role: 'assistant', content, ts: new Date() };
-        return next;
-      });
-    } catch {
-      setMessages(prev => {
-        const next = [...prev];
-        next[next.length - 1] = {
-          role: 'assistant',
-          content: 'Could not reach the AI Copilot. Make sure the FastAPI backend is running on port 8000 and your Groq API key is configured.',
-          ts: new Date(),
-        };
-        return next;
-      });
-    } finally {
-      setLoading(false);
-      inputRef.current?.focus();
-    }
-  }
+  const send = useCallback((text: string) => {
+    const t = text.trim().slice(0, 4000);
+    if (!t || busy) return;
+    setInput('');
+    if (taRef.current) taRef.current.style.height = 'auto';
+    run([...msgs.filter(m => !(m.error && !m.content)), { id: ++idRef.current, role: 'user', content: t, ts: Date.now() }]);
+  }, [busy, msgs, run]);
 
-  function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      send(input);
-    }
-  }
+  const retry = () => {
+    const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    const idx = msgs.findIndex(m => m.id === lastUser.id);
+    run(msgs.slice(0, idx + 1));
+  };
+  const newChat = () => { abortRef.current?.abort(); setMsgs([]); setBusy(false); setInput(''); };
 
   return (
-    <div className={styles.page}>
-      <Topbar title="AI Copilot" subtitle="Groq Llama 3.3 70B · District intelligence at your fingertips" />
-
-      <div className={styles.layout}>
-        {/* ── Chat area ── */}
-        <div className={styles.chatPane}>
-          <div className={styles.messages}>
-            {messages.length === 0 ? (
-              /* Welcome screen */
-              <motion.div
-                className={styles.welcome}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.45 }}
-              >
-                <div className={styles.welcomeIcon}>
-                  <Brain size={32} strokeWidth={1.5} />
-                </div>
-                <h2 className="t-title2 text-primary" style={{ marginTop: 18 }}>LiveIQ AI Copilot</h2>
-                <p className="t-callout text-tertiary" style={{ maxWidth: 400, textAlign: 'center', lineHeight: 1.7, marginTop: 8 }}>
-                  Ask anything about artists, cities, venues, pricing, or competitor activity. The Copilot has access to your full entity database and city intelligence.
-                </p>
-
-                <div className={styles.suggestions}>
-                  {SUGGESTIONS.map((s, i) => (
-                    <motion.button
-                      key={s}
-                      className={styles.suggestion}
-                      onClick={() => send(s)}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.15 + i * 0.06, ease: [0.25, 0.46, 0.45, 0.94] }}
-                    >
-                      <span>{s}</span>
-                      <ChevronRight size={13} color="var(--accent)" />
-                    </motion.button>
+    <Page title="AI Copilot" subtitle="Ask about artists, cities and pricing" fill>
+      <div className={styles.root}>
+        <div className={styles.toolbar}>
+          <div className={styles.menuWrap} ref={menuRef}>
+            <button type="button" className={styles.modelBtn} aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(o => !o)} disabled={!models}>
+              <span>{active?.name ?? 'Model'}</span><ChevronDown size={14} />
+            </button>
+            <AnimatePresence>
+              {menu && models && (
+                <motion.div className={styles.menu} role="menu" initial={{ opacity: 0, y: -6, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: .18 }}>
+                  {models.available_models.map(m => (
+                    <button key={m.id} type="button" role="menuitemradio" aria-checked={active?.id === m.id} className={styles.menuItem} onClick={() => { setModel(m.id); setMenu(false); }}>
+                      <div style={{ flex: 1 }}><b style={{ fontSize: '.875rem' }}>{m.name}</b><small>{m.description}</small></div>
+                      {active?.id === m.id && <Check size={16} color="var(--accent)" />}
+                    </button>
                   ))}
-                </div>
-              </motion.div>
-            ) : (
-              <div className={styles.bubbleList}>
-                <AnimatePresence initial={false}>
-                  {messages.map((m, i) => (
-                    <Bubble key={i} msg={m} />
-                  ))}
-                </AnimatePresence>
-                <div ref={bottomRef} />
-              </div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-
-          {/* Input bar */}
-          <div className={styles.inputBar}>
-            <div className={styles.inputWrap}>
-              <textarea
-                ref={inputRef}
-                className={styles.inputArea}
-                placeholder="Ask about artists, cities, pricing, competitors..."
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={handleKey}
-                rows={1}
-                disabled={loading}
-              />
-              <button
-                className={styles.sendBtn}
-                onClick={() => send(input)}
-                disabled={loading || !input.trim()}
-                title="Send (Enter)"
-              >
-                {loading
-                  ? <div className={styles.sendSpinner} />
-                  : <Send size={16} />
-                }
-              </button>
-            </div>
-            <p className="t-caption text-tertiary" style={{ marginTop: 8, textAlign: 'center' }}>
-              Press Enter to send · Shift+Enter for new line · Powered by Groq Llama 3.3 70B
-            </p>
-          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={newChat} disabled={msgs.length === 0} aria-label="New chat"><SquarePen size={14} /> New chat</button>
         </div>
 
-        {/* ── Sidebar: context info ── */}
-        <div className={styles.sidePane}>
-          <div className={styles.sideSection}>
-            <p className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '0.6875rem', marginBottom: 12 }}>
-              What the Copilot knows
-            </p>
-            {[
-              { icon: <Brain size={14} />, label: 'Full entity database', sub: 'All artists, films, sports & acts' },
-              { icon: <Zap size={14} />, label: 'Live composite scores', sub: 'Google Trends + NewsAPI + Last.fm' },
-              { icon: <Send size={14} />, label: 'City demand data', sub: 'Music market scores for 12+ cities' },
-              { icon: <Brain size={14} />, label: 'Pricing benchmarks', sub: 'Historical ticket price data' },
-            ].map(({ icon, label, sub }) => (
-              <div key={label} className={styles.contextItem}>
-                <div className={styles.contextIcon}>{icon}</div>
-                <div>
-                  <p className="t-callout text-primary" style={{ fontWeight: 600 }}>{label}</p>
-                  <p className="t-caption text-tertiary">{sub}</p>
-                </div>
+        <div className={styles.scroll} ref={scrollRef} onScroll={onScroll}>
+          {msgs.length === 0 ? (
+            <motion.div className={styles.welcome} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 200, damping: 24 }}>
+              <h2 className={styles.wTitle}>Ask about the Indian live-events market</h2>
+              <p className={styles.wSub}>Artists, cities, pricing and timing, answered with LiveIQ’s context.</p>
+              {models && !models.groq_configured && <p className="t-footnote" style={{ color: 'var(--warning)' }}>The AI provider isn’t configured on this server, so answers may fail.</p>}
+              <div className={styles.sugg}>
+                {SUGGESTIONS.map(sg => <button key={sg} type="button" className={styles.suggBtn} onClick={() => send(sg)}><span>{sg}</span><ChevronRight size={16} /></button>)}
               </div>
-            ))}
-          </div>
+            </motion.div>
+          ) : (
+            <div className={styles.thread} role="log" aria-live="polite">
+              <div className={styles.stamp}>Today {time(msgs[0].ts)}</div>
+              {msgs.map((m, idx) => {
+                const user = m.role === 'user';
+                const lastOfRun = msgs[idx + 1]?.role !== m.role;
+                const firstOfRun = msgs[idx - 1]?.role !== m.role;
+                return (
+                  <motion.div key={m.id} style={{ marginTop: firstOfRun && idx ? 8 : 0 }} initial={{ opacity: 0, y: 10, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: .28, ease: [0.22, 1, 0.36, 1] }}>
+                    <div className={`${styles.row} ${user ? styles.rowUser : ''}`}>
+                      <div className={`${styles.bubble} ${user ? styles.user : styles.ai} ${lastOfRun ? styles.tail : ''} ${m.error && !m.content ? styles.errBubble : ''}`}>
+                        {user ? m.content : (
+                          <>
+                            {m.streaming && !m.content ? <span className={styles.dots} aria-label="Copilot is typing"><i /><i /><i /></span> : m.content ? <Markdown text={m.content} /> : null}
+                            {m.streaming && m.content && <span className={styles.cursor} />}
+                            {m.error && (
+                              <div role="alert" style={{ color: 'var(--negative)', fontSize: '.875rem' }}>
+                                {m.error}
+                                {m.error !== 'Stopped.' && <div><button type="button" className={`btn btn-tinted btn-sm ${styles.retry}`} onClick={retry}><RotateCcw size={13} /> Try again</button></div>}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
-          <div className={styles.sideSection} style={{ marginTop: 20 }}>
-            <p className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '0.6875rem', marginBottom: 12 }}>
-              Example queries
-            </p>
-            {SUGGESTIONS.slice(0, 4).map(s => (
-              <button
-                key={s}
-                className={styles.sideQuery}
-                onClick={() => { setMessages([]); send(s); }}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+        <div className={styles.composer}>
+          <form className={styles.composerIn} onSubmit={e => { e.preventDefault(); send(input); }}>
+            <textarea ref={taRef} rows={1} value={input} placeholder="Ask LiveIQ Copilot" aria-label="Message" enterKeyHint="send"
+              onChange={e => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`; }}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(input); } }} />
+            {busy
+              ? <button type="button" className={`${styles.send} ${styles.stop}`} aria-label="Stop generating" onClick={() => abortRef.current?.abort()}><Square size={13} fill="currentColor" /></button>
+              : <button type="submit" className={styles.send} aria-label="Send" disabled={!input.trim()}><ArrowUp size={18} strokeWidth={2.6} /></button>}
+          </form>
+          <p className={styles.foot}>AI can make mistakes. Verify numbers before booking decisions.</p>
         </div>
       </div>
-    </div>
+    </Page>
   );
 }

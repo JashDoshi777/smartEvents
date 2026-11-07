@@ -1,11 +1,11 @@
 .topbar {
-  position: sticky; top: 0; z-index: 90;
+  position: sticky; top: 12px; z-index: 90; margin: 12px 0 0; border-radius: 22px; border: .5px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
   height: var(--topbar-height);
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 0 clamp(16px, 2.4vw, 32px);
   background: var(--glass-fill-strong);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border-bottom: .5px solid var(--divider);
 }
 .left { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .menuBtn { display: none; width: 38px; height: 38px; border-radius: 50%; border: 0; background: var(--fill-tertiary); color: var(--text-primary); cursor: pointer; place-items: center; flex-shrink: 0; }
@@ -15,6 +15,11 @@
 
 .actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
+.searchTrigger { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 12px; border: 0; border-radius: 10px; cursor: pointer;
+  background: var(--fill-tertiary); color: var(--text-tertiary); font: 500 .875rem var(--font-sans); width: clamp(150px, 16vw, 220px); transition: background var(--duration-fast); }
+.searchTrigger:hover { background: var(--fill-tertiary); color: var(--text-secondary); }
+.searchText { flex: 1; text-align: left; }
+.kbd { font: 600 .6875rem var(--font-sans); background: var(--fill-tertiary); padding: 3px 6px; border-radius: 6px; }
 .searchWrap { position: relative; width: clamp(160px, 22vw, 280px); }
 .searchIcon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; z-index: 1; }
 .searchInput { height: 36px; padding: 0 12px 0 34px !important; border-radius: 10px !important; font-size: .875rem !important; }
@@ -49,6 +54,8 @@
 @media (max-width: 900px) {
   .menuBtn { display: grid; }
   .scopeWrap, .searchWrap { display: none; }
+  .searchTrigger { width: 38px; padding: 0; justify-content: center; border-radius: 50%; height: 38px; }
+  .searchText, .kbd { display: none; }
   .subtitle { display: none; }
 }
 @media (max-width: 520px) { .themeToggle { display: none; } }

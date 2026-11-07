@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Sun, Moon, Search, LogOut, Music2, Film, Trophy, Mic2, Menu } from 'lucide-react';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Segmented } from '@/components/ui/Controls';
-import { useShell } from './shell-context';
+import { useShell, usePalette } from './shell-context';
 import { useTheme } from '@/components/providers/ThemeProvider';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { searchEntities, EntitySearchResult } from '@/lib/api';
@@ -110,6 +110,17 @@ function GlobalSearch() {
   );
 }
 
+function SearchTrigger() {
+  const { open } = usePalette();
+  return (
+    <button className={styles.searchTrigger} onClick={open} aria-label="Search (Command K)">
+      <Search size={15} />
+      <span className={styles.searchText}>Search</span>
+      <kbd className={styles.kbd}>⌘K</kbd>
+    </button>
+  );
+}
+
 interface TopbarProps {
   title: string;
   subtitle?: string;
@@ -179,7 +190,7 @@ export function Topbar({ title, subtitle }: TopbarProps) {
           <Segmented ariaLabel="Market scope" value={scope} onChange={setScope}
             options={[{ value: 'india', label: 'India' }, { value: 'global', label: 'Global' }]} />
         </div>
-        <GlobalSearch />
+        <SearchTrigger />
 
         {/* Notifications */}
         <NotificationBell />

@@ -344,58 +344,7 @@ export interface VenueCalendarResponse {
     open_weekends: number;
     total_tracked_events: number;
   };
-  data_note: string;
-}
-
-// ── Watchlist ─────────────────────────────────────────────────────
-export interface WatchlistEntity {
-  id: string;
-  name: string;
-  category: string | null;
-  is_international: boolean;
-  watched_since: string | null;
-}
-
-export interface WatchlistResponse {
-  watchlist: WatchlistEntity[];
-  total: number;
-}
-
-export interface NotificationsResponse {
-  notifications: NotificationItem[];
-  total: number;
-}
-
-export interface HealthResponse {
-  status: 'ok' | 'degraded';
-  version: string;
-  services: {
-    postgres: 'up' | 'down';
-    mongodb: 'up' | 'down';
-    redis: 'up' | 'down';
-  };
-  apis_configured: Record<string, boolean>;
-}
-
-export interface KPIResponse {
-  generated_at: string;
-  entity_portfolio: {
-    total_tracked: number;
-    with_live_metrics: number;
-    metrics_coverage_pct: number;
-    avg_composite_score: number | null;
-    by_type: Record<string, number>;
-    top_categories: { category: string; count: number }[];
-    international: number;
-    indian: number;
-  };
-  top_entities: {
-    name: string; type: string; category: string;
-    composite_score: number; google_trend: number; news_mentions_7d: number;
-  }[];
-  city_coverage: {
-    total_tracked: number; active_on_district: number; expansion_opportunities: number;
-  };
+  data_note?: string;
 }
 
 export interface BriefingResponse {
@@ -639,3 +588,233 @@ export interface AlertsResponse {
   total: number;
   generated_at: string;
 }
+
+// ── Dashboard (market-scoped) ─────────────────────────────────────
+export const getDashboardSummaryScoped = (market: 'india' | 'global' | 'all' = 'all') =>
+  apiFetch<DashboardSummary>(`/dashboard/summary?market=${market}`);
+
+// ── Trend Radar / Intelligence (market-scoped) ───────────────────
+export interface BreakoutPrediction {
+  entity_id: string; name: string; entity_type: string; category: string | null; country: string | null;
+  composite_score: number | null; trend_direction: 'rising' | 'falling' | 'stable' | 'pending';
+  lastfm_listeners?: number | null; news_mentions_7d: number | null; google_trend_score: number | null; last_updated: string | null;
+}
+export interface BreakoutResponse { predictions: BreakoutPrediction[]; total: number; has_live_scores: boolean; note?: string }
+export interface ViralSignal {
+  entity_id: string; name: string; entity_type: string; news_mentions_7d: number | null;
+  google_trend_score: number | null; composite_score: number | null; sentiment_compound: number | null;
+}
+export interface ViralResponse { signals: ViralSignal[]; total?: number; message?: string }
+export const getTrendBreakouts = (market: 'india' | 'global' | 'all' = 'all', limit = 24) =>
+  apiFetch<BreakoutResponse>(`/trends/breakout?market=${market}&limit=${limit}`);
+export const getTrendViral = (market: 'india' | 'global' | 'all' = 'all', limit = 12) =>
+  apiFetch<ViralResponse>(`/trends/viral?market=${market}&limit=${limit}`);
+
+export interface EntityScoreResponse {
+  entity_id: string; entity_name: string; composite_score: number | null; trend_direction: string;
+  signals: { lastfm_listeners?: number | null; youtube_subscribers?: number | null; youtube_views_30d?: number | null;
+    news_mentions_7d?: number | null; google_trend_score?: number | null; google_trend_delta_7d?: number | null;
+    sentiment_compound?: number | null; data_completeness?: number | null };
+  last_updated: string | null; data_sources: string[]; message?: string;
+}
+export const getEntityScore = (entityId: string) => apiFetch<EntityScoreResponse>(`/entities/${entityId}/score`);
+export interface EntityCityDemand { city: string; state: string | null; tier: number | null; demand_score: number; is_home_city: boolean; active_on_district: boolean; demand_rank: number }
+export const getEntityCities = (entityId: string) =>
+  apiFetch<{ entity_id: string; entity_name: string; cities: EntityCityDemand[]; methodology: string }>(`/entities/${entityId}/cities`);
+export interface CompareProfile {
+  id: string; name: string; entity_type: string; category: string | null; country: string | null; is_international: boolean;
+  home_city?: string | null; primary_market?: string | null; booking_price_range_min?: number | null; booking_price_range_max?: number | null;
+  typical_venue_capacity_min?: number | null; typical_venue_capacity_max?: number | null;
+  composite_score: number | null; trend_direction: string; listeners: number | null;
+}
+export const compareEntities = (ids: string[]) =>
+  apiFetch<{ entities: CompareProfile[]; comparison_count: number }>('/entities/compare', { method: 'POST', body: JSON.stringify(ids) });
+
+
+// ══ Typed additions (markets / competitors / calendar / pricing pages) ══════════
+
+/** Error carrying HTTP status + backend `detail`, so UIs can show friendly 403/422 messages. */
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+  constructor(status: number, detail: string) { super(detail); this.status = status; this.detail = detail; }
+}
+
+async function apiFetchStrict<T>(path: string, opts?: RequestInit, retried = false): Promise<T> {
+  const token = getAccessToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    ...opts,
+  });
+  if (res.status === 401 && !retried && (await tryRefresh())) return apiFetchStrict<T>(path, opts, true);
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const j = await res.json();
+      if (typeof j?.detail === 'string') detail = j.detail;
+      else if (Array.isArray(j?.detail)) detail = j.detail.map((d: { loc?: unknown[]; msg?: string }) => `${(d.loc ?? []).slice(1).join('.')}: ${d.msg}`).join('; ');
+    } catch { /* non-JSON body */ }
+    throw new ApiError(res.status, detail);
+  }
+  return res.json() as Promise<T>;
+}
+
+export interface CompetitorPlatform {
+  name: string; parent: string; founded: number; strengths: string[]; markets: string[];
+  active_in_city: boolean; market_position: string; news_mentions_7d: number;
+  estimated_events?: number; live_events_count?: number;
+}
+export interface CompetitorIntelligence {
+  city: string; total_ticketmaster_events_live: number;
+  platforms: Record<string, CompetitorPlatform>;
+  district_opportunity: { city_tier: number | string; district_active: boolean; recommendation: string };
+  data_sources: string[]; note?: string;
+}
+export const getCompetitorIntelligence = (city: string) =>
+  apiFetchStrict<CompetitorIntelligence>(`/competitors/intelligence?city=${encodeURIComponent(city)}`);
+
+export interface CompetitorGapItem {
+  city: string; state: string | null; tier: number; population: number | null; avg_event_market_score: number;
+  competitor_presence: { bookmyshow: string; insider: string; district: string };
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+}
+export interface CompetitorGapsResponse { gaps: CompetitorGapItem[]; total: number; high_priority: number; insight?: string }
+export const getCompetitorGapList = () => apiFetchStrict<CompetitorGapsResponse>('/competitors/gaps');
+
+export interface CompetitorArticle { platform: string; title: string | null; source: string | null; published_at: string | null; url: string | null }
+export interface CompetitorFeedResponse { articles: CompetitorArticle[]; total: number; platforms_monitored: string[]; note?: string }
+export const getCompetitorFeed = (limit = 20) => apiFetchStrict<CompetitorFeedResponse>(`/competitors/activity-feed?limit=${limit}`);
+
+export interface CityScores { nightlife: number | null; sports_affinity: number | null; arts_culture: number | null; comedy_market: number | null; music_market: number | null; composite: number | null }
+export interface MarketCity {
+  id: string; name: string; state: string; tier: number; population: number | null; metro_population: number | null;
+  avg_monthly_income: number | null; youth_population_pct: number | null; top_categories: string[] | null;
+  active_on_district: boolean; scores: CityScores;
+}
+export const getMarketCities = () => apiFetchStrict<{ cities: MarketCity[]; total: number }>('/cities/');
+
+export interface CityIntelDetail extends MarketCity {
+  festival_months?: { festivals?: Record<string, number>; low_demand?: number[]; high_demand?: number[] } | null;
+  intelligence: {
+    expansion_recommendation: string; peak_season_months: string[]; monsoon_risk: string; income_tier: string; youth_index: string;
+    restaurant_partnerships: { name: string; venue_type: string | null; cuisine: string | null }[];
+    venue_counts_by_type: Record<string, number>;
+  };
+}
+export const getMarketCityIntel = (city: string) => apiFetchStrict<CityIntelDetail>(`/cities/${encodeURIComponent(city)}/intelligence`);
+
+export interface CityRestaurant {
+  id: string; name: string; venue_type: string | null; cuisines: string[]; address: string | null;
+  latitude: number | null; longitude: number | null; phone: string | null; website: string | null; sources: string[];
+}
+export const getCityRestaurants = (city: string, o: { venue_type?: string; cuisine?: string; limit?: number } = {}) => {
+  const q = new URLSearchParams({ limit: String(o.limit ?? 100) });
+  if (o.venue_type) q.set('venue_type', o.venue_type);
+  if (o.cuisine) q.set('cuisine', o.cuisine);
+  return apiFetchStrict<{ city: string; restaurants: CityRestaurant[]; total: number; data_note?: string }>(`/cities/${encodeURIComponent(city)}/restaurants?${q}`);
+};
+
+export const getVenueCalendarStrict = (venueId: string, months = 3) =>
+  apiFetchStrict<VenueCalendarResponse>(`/venues/${venueId}/calendar?months=${months}`);
+export const getCityVenuesStrict = (city: string) => apiFetchStrict<CityVenuesResponse>(`/cities/${encodeURIComponent(city)}/venues`);
+
+export interface PricingResult {
+  entity: { id: string; name: string; type: string | null; category: string | null; is_international: boolean };
+  recommendation: {
+    proposed_price: number; recommended_price: number; price_tier: string; confidence: string; reasoning: string;
+    predicted_fill_rate: number | null; sensitivity_curve: { price: number; attendance_pct: number }[];
+  };
+  signals: { composite_score: number; google_trend_score: number; demand_score: number; city_multiplier: number; capacity_factor: number; season_factor: number; international_factor: number };
+  benchmarks: { category: string; floor: number; sweet_spot: number; premium: number; ultra_premium: number };
+  model: string;
+}
+export const optimizePriceStrict = (body: PricingRequest) =>
+  apiFetchStrict<PricingResult>('/pricing/optimize', { method: 'POST', body: JSON.stringify(body) });
+
+export interface PriceBenchmarks {
+  benchmarks: Record<string, { floor: number; sweet_spot: number; premium: number; ultra_premium: number }>;
+  city_multipliers: Record<string, number>; notes?: Record<string, string>;
+}
+export const getPriceBenchmarkTable = () => apiFetchStrict<PriceBenchmarks>('/pricing/benchmarks');
+
+export interface ElasticityPoint { city: string; tier: number; state: string; optimal_price: number; city_multiplier: number; demand_index: number; affordability_index: number }
+export const getElasticityCurve = (entityId: string, price: number) =>
+  apiFetchStrict<{ entity_name: string; proposed_price: number; elasticity_curve: ElasticityPoint[]; insight: string }>(`/pricing/elasticity/${entityId}?proposed_price=${price}`);
+
+// ── Restored types (were dropped by a concurrent edit) ────────────
+export interface WatchlistEntity {
+  id: string;
+  name: string;
+  category: string | null;
+  is_international: boolean;
+  watched_since: string | null;
+}
+export interface WatchlistResponse { watchlist: WatchlistEntity[]; total: number }
+export interface NotificationsResponse { notifications: NotificationItem[]; total: number }
+export interface HealthResponse {
+  status: 'ok' | 'degraded';
+  version: string;
+  services: { postgres: 'up' | 'down'; mongodb: 'up' | 'down'; redis: 'up' | 'down' };
+  apis_configured: Record<string, boolean>;
+}
+export interface KPIResponse {
+  generated_at: string;
+  entity_portfolio: {
+    total_tracked: number; with_live_metrics: number; metrics_coverage_pct: number;
+    avg_composite_score: number | null; by_type: Record<string, number>;
+    top_categories: { category: string; count: number }[]; international: number; indian: number;
+  };
+  top_entities: { name: string; type: string; category: string; composite_score: number; google_trend: number; news_mentions_7d: number }[];
+  city_coverage: { total_tracked: number; active_on_district: number; expansion_opportunities: number };
+}
+
+// ── Recommendations (market-aware) ───────────────────────────────
+export interface RecommendationItem {
+  entity_id: string; entity_name: string; entity_type: string; category: string | null; is_international: boolean;
+  composite_score: number; city_demand_score: number | null; recommendation_score: number;
+  trend_direction: 'rising' | 'falling' | 'stable'; last_updated: string | null; rank: number;
+}
+export interface RecommendationsResponse { recommendations: RecommendationItem[]; total_candidates: number; methodology: string }
+export const getRankedRecommendations = (p: { category?: string; city?: string; isInternational?: boolean; excludeWatchlisted?: boolean; limit?: number }) => {
+  const q = new URLSearchParams();
+  if (p.category) q.set('category', p.category);
+  if (p.city) q.set('city', p.city);
+  if (p.isInternational != null) q.set('is_international', String(p.isInternational));
+  if (p.excludeWatchlisted) q.set('exclude_watchlisted', 'true');
+  q.set('limit', String(p.limit ?? 20));
+  return apiFetch<RecommendationsResponse>(`/recommend/entities?${q.toString()}`);
+};
+export interface SignVerdictResponse {
+  entity_id: string; entity_name: string; city: string; verdict: 'sign' | 'consider' | 'pass' | 'insufficient_data'; reasons: string[];
+  predicted_fill_rate_pct: number; recommended_price: number; proposed_price: number; confidence: number; model: string;
+  has_real_metrics: boolean; city_tracked: boolean;
+}
+export const getSignVerdict = (body: { entity_id: string; city: string; venue_capacity: number; proposed_price: number }) =>
+  apiFetch<SignVerdictResponse>('/recommend/sign', { method: 'POST', body: JSON.stringify(body) });
+
+// ── Copilot ──────────────────────────────────────────────────────
+export interface CopilotModel { id: string; name: string; context_window: number; description: string; recommended: boolean }
+export interface CopilotModelsResponse { current_model: string; available_models: CopilotModel[]; groq_configured: boolean }
+export const getCopilotModels = () => apiFetch<CopilotModelsResponse>('/copilot/models');
+
+// ── Psychology (typed) ───────────────────────────────────────────
+export interface PsychologyFactor { name: string; multiplier: number; real_signal: Record<string, string | number | null>; explanation: string }
+export interface PsychologyReport {
+  entity_id: string; entity_name: string; city: string | null; combined_multiplier: number; interpretation: string;
+  factors: PsychologyFactor[]; data_coverage_note?: string;
+}
+export const getPsychology = (entityId: string, city?: string) =>
+  apiFetch<PsychologyReport>(`/psychology/${entityId}${city ? `?city=${encodeURIComponent(city)}` : ''}`);
+
+// ── Social listening (typed) ─────────────────────────────────────
+export interface SentimentResponse {
+  entity_id: string; entity_name: string; status: 'ok' | 'no_data_yet'; message?: string;
+  sentiment: { positive?: number | null; negative?: number | null; neutral?: number | null; compound?: number | null; sample_size?: number | null;
+    reddit_posts_7d?: number | null; news_mentions_7d?: number | null; last_collected_at?: string | null };
+  recent_posts: { platform: string; content_snippet: string; sentiment_label: string | null; sentiment_score: number | null; likes: number | null; comments: number | null; analyzed_at: string | null }[];
+}
+export interface TopicsResponse { entity_id: string; topics: { topic: string; mentions: number }[]; total_posts_analyzed: number; window_days: number; methodology?: string }
+export interface CrisisAlert { entity_id: string; entity_name: string; severity: 'critical' | 'high' | 'medium'; negative_share_last_24h: number; negative_share_prior_7d: number; delta_pct_points: number; posts_last_24h: number }
+export const getSentiment = (entityId: string) => apiFetch<SentimentResponse>(`/social/sentiment/${entityId}`);
+export const getTopics = (entityId: string, days = 30) => apiFetch<TopicsResponse>(`/social/topics/${entityId}?days=${days}`);
+export const getCrisis = () => apiFetch<{ alerts: CrisisAlert[]; total: number; methodology?: string }>('/social/crisis-alerts');

@@ -3,45 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-  LayoutDashboard, Brain, TrendingUp, MapPin, BarChart3, Users, IndianRupee,
-  MessageSquare, Settings, ChevronLeft, Activity, Calculator, Users2, LineChart,
-  Star, CalendarDays, Radio, Sparkles, Lightbulb, X,
-} from 'lucide-react';
+import { ChevronLeft, X } from 'lucide-react';
+import { NAV_GROUPS, bestMatch } from './nav';
 import styles from './Sidebar.module.css';
 
-const GROUPS = [
-  { title: 'Overview', items: [
-    { href: '/',          icon: LayoutDashboard, label: 'Dashboard' },
-    { href: '/executive', icon: BarChart3,       label: 'Executive' },
-    { href: '/copilot',   icon: MessageSquare,   label: 'AI Copilot' },
-  ]},
-  { title: 'Discover', items: [
-    { href: '/intelligence',    icon: Brain,     label: 'Intelligence' },
-    { href: '/trends',          icon: TrendingUp, label: 'Trend Radar' },
-    { href: '/recommendations', icon: Sparkles,  label: 'Recommendations' },
-    { href: '/listening',       icon: Radio,     label: 'Social Listening' },
-    { href: '/psychology',      icon: Lightbulb, label: 'Demand Psychology' },
-  ]},
-  { title: 'Markets', items: [
-    { href: '/markets',          icon: MapPin,       label: 'City Markets' },
-    { href: '/competitors',      icon: Users,        label: 'Competitors' },
-    { href: '/venues/calendar',  icon: CalendarDays, label: 'Venue Calendar' },
-  ]},
-  { title: 'Plan & Price', items: [
-    { href: '/pricing',               icon: IndianRupee, label: 'Pricing' },
-    { href: '/events',                icon: Activity,    label: 'Fill-rate Monitor' },
-    { href: '/events/model',          icon: Calculator,  label: 'Deal Modeler' },
-    { href: '/events/pairing',        icon: Users2,      label: 'Artist Pairing' },
-    { href: '/intelligence/forecast', icon: LineChart,   label: 'Demand Forecast' },
-  ]},
-  { title: 'Workspace', items: [
-    { href: '/watchlist', icon: Star,     label: 'Watchlist' },
-    { href: '/settings',  icon: Settings, label: 'Settings' },
-  ]},
-];
-
-const ALL = GROUPS.flatMap(g => g.items);
+const GROUPS = NAV_GROUPS;
 
 interface SidebarProps {
   collapsed: boolean;
@@ -52,10 +18,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
-  // Highlight only the most specific match (/events/model beats /events).
-  const best = ALL
-    .filter(i => pathname === i.href || (i.href !== '/' && pathname.startsWith(i.href)))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+  const best = bestMatch(pathname);
 
   return (
     <>

@@ -28,17 +28,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('liveiq-theme', theme);
   }, [theme]);
 
-  // If the user has never explicitly toggled (no saved preference), keep
-  // following the OS theme live — an Apple-native app tracks system
-  // appearance in real time, not just at first load.
-  useEffect(() => {
-    if (localStorage.getItem('liveiq-theme')) return;
-    const mq = window.matchMedia('(prefers-color-scheme: light)');
-    const onChange = (e: MediaQueryListEvent) => setTheme(e.matches ? 'light' : 'dark');
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-
   const toggle = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
 
   return <ThemeCtx.Provider value={{ theme, toggle }}>{children}</ThemeCtx.Provider>;

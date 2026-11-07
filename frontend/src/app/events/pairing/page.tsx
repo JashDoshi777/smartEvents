@@ -1,231 +1,111 @@
 'use client';
 
-import { useState } from 'react';
-import useSWR from 'swr';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import {
-  Users2, ChevronDown, AlertCircle, Info, Sparkles,
-} from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { Loader2, Users2 } from 'lucide-react';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { getPortfolio, getCities, recommendPairs, PairRecommendResponse } from '@/lib/api';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { EmptyState, ErrorState } from '@/components/ui/States';
+import { Segmented } from '@/components/ui/Controls';
+import { EntityPicker, CityPicker, FormGroup, FormRow, FormHint } from '@/components/intel/Pickers';
+import { Ring } from '@/components/intel/Ring';
+import { recommendPairs, type PairRecommendResponse } from '@/lib/api';
+import { inrCompact, num } from '@/lib/format';
 import styles from './page.module.css';
 
-const MARKETS = ['All', 'India', 'Global'] as const;
-type MarketFilter = typeof MARKETS[number];
+type Market = 'india' | 'all';
 
-function scoreColor(score: number) {
-  if (score >= 80) return 'var(--positive)';
-  if (score >= 50) return 'var(--warning)';
-  return 'var(--text-tertiary)';
-}
-
-export default function PairingRecommenderPage() {
-  const [city, setCity] = useState('');
-  const [anchorEntityId, setAnchorEntityId] = useState('');
+export default function PairingPage() {
+  const [city, setCity] = useState('Mumbai');
+  const [anchor, setAnchor] = useState('');
   const [budget, setBudget] = useState('');
-  const [market, setMarket] = useState<MarketFilter>('All');
-  const [result, setResult] = useState<PairRecommendResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [market, setMarket] = useState<Market>('india');
+  const [res, setRes] = useState<PairRecommendResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [formErr, setFormErr] = useState<string | null>(null);
+  const seq = useRef(0);
 
-  const { data: portfolio } = useSWR('portfolio/pairing', () => getPortfolio(), { shouldRetryOnError: false });
-  const { data: citiesData } = useSWR('cities/pairing', () => getCities(), { shouldRetryOnError: false });
-
-  const allEntities = portfolio?.portfolio ?? [];
-  const indiaCount = allEntities.filter(e => !e.is_international).length;
-  const globalCount = allEntities.filter(e => e.is_international).length;
-  const entities = allEntities.filter(e => {
-    if (market === 'India') return !e.is_international;
-    if (market === 'Global') return e.is_international;
-    return true;
-  });
-  const cities = citiesData?.cities ?? [];
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!city) {
-      setError('Select a city before finding pairings.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
+  const run = useCallback(async () => {
+    if (!city) return setFormErr('Choose a city to build the bill for.');
+    setFormErr(null); setErr(null); setBusy(true);
+    const my = ++seq.current;
     try {
-      const res = await recommendPairs({
-        city,
-        anchor_entity_id: anchorEntityId || undefined,
-        budget: budget ? Number(budget) : undefined,
-        market: market === 'All' ? undefined : market,
-        limit: 8,
-      });
-      setResult(res);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to find pairings. Ensure the backend is running.');
-    } finally {
-      setLoading(false);
-    }
-  }
+      const out = await recommendPairs({ city, budget: budget ? Number(budget) : undefined, anchor_entity_id: anchor || undefined, market: market === 'india' ? 'India' : undefined, limit: 10 });
+      if (my === seq.current) setRes(out);
+    } catch (x) {
+      if (my !== seq.current) return;
+      const m = x instanceof Error ? x.message : '';
+      setRes(null);
+      setErr(/API 404/.test(m) ? 'That artist has no live metrics yet, so we can’t pair them. Pick another anchor.'
+        : /API 400/.test(m) ? 'Not enough artists with live data to form pairings for this filter. Try “All markets”.'
+        : 'Pairing service is unavailable right now. Please retry.');
+    } finally { if (my === seq.current) setBusy(false); }
+  }, [city, budget, anchor, market]);
 
+  useEffect(() => { run(); /* initial suggestion run */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [top, ...rest] = res?.recommendations ?? [];
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Artist Pairing Recommender" subtitle="Find genre-compatible, similar-tier artists to co-headline a shared bill" />
+    <Page title="Artist Pairing" subtitle="Co-headliners and support acts that fill rooms together">
+      <div className={styles.layout}>
+        <form className={styles.form} onSubmit={e => { e.preventDefault(); run(); }}>
+          <FormGroup title="Build a bill">
+            <FormRow label="City" htmlFor="p-city"><CityPicker id="p-city" value={city} onChange={setCity} /></FormRow>
+            <FormRow label="Anchor"><EntityPicker value={anchor} onChange={id => setAnchor(id)} placeholder="Any artist" indiaOnly={market === 'india'} types={['artist']} /></FormRow>
+            <FormRow label="Budget" htmlFor="p-budget"><span style={{ color: 'var(--text-secondary)', fontWeight: 600, width: 'auto', marginRight: 4 }}>₹</span><input id="p-budget" className="input tnum" style={{ width: '10ch', flex: '0 0 auto', textAlign: 'left' }} inputMode="numeric" placeholder="No cap" value={budget} onChange={e => setBudget(e.target.value.replace(/\D/g, ''))} /></FormRow>
+            <FormRow label="Market"><Segmented ariaLabel="Market" value={market} onChange={m => { setMarket(m); setAnchor(''); }} options={[{ value: 'india', label: 'India' }, { value: 'all', label: 'All' }]} /></FormRow>
+          </FormGroup>
+          {budget && <FormHint>Combined fee capped at {inrCompact(Number(budget))}</FormHint>}
+          {formErr && <div className={styles.err} role="alert">{formErr}</div>}
+          <button type="submit" className="btn btn-primary" disabled={busy} style={{ minHeight: 50, fontSize: '1rem' }}>
+            {busy ? <><Loader2 size={16} className="spin" /> Finding pairs…</> : 'Find pairings'}
+          </button>
+        </form>
 
-      <div className={styles.page}>
-        <GlassCard className={styles.formCard} delay={0.04}>
-          <div className={styles.formHeader}>
-            <Users2 size={18} color="var(--accent)" />
-            <div>
-              <h2 className="t-headline text-primary">Configure the Search</h2>
-              <p className="t-footnote text-tertiary">Optionally anchor to one artist to find their best pairing partners, or leave blank to rank all pairs</p>
-            </div>
-          </div>
-
-          <form onSubmit={handleSubmit} className={styles.form}>
-            {/* Market toggle */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {MARKETS.map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setMarket(m); setAnchorEntityId(''); }}
-                  style={{
-                    padding: '4px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 500,
-                    background: market === m ? 'var(--accent-dim)' : 'var(--glass-fill)',
-                    border: `1px solid ${market === m ? 'var(--accent)' : 'var(--glass-border)'}`,
-                    color: market === m ? 'var(--accent)' : 'var(--text-secondary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {m}
-                  {m === 'India' && ` (${indiaCount})`}
-                  {m === 'Global' && ` (${globalCount})`}
-                </button>
-              ))}
-            </div>
-
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="pair-city">City</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    id="pair-city"
-                    className={`input ${styles.select}`}
-                    value={city}
-                    onChange={e => setCity(e.target.value)}
-                    required
-                    disabled={cities.length === 0}
-                  >
-                    <option value="">{cities.length > 0 ? 'Select city...' : 'Cities unavailable'}</option>
-                    {cities.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
+        <div className={styles.results}>
+          {busy && !res ? (
+            <><Skeleton height={190} radius={26} />{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={64} radius={18} />)}</>
+          ) : err ? (
+            <GlassCard><ErrorState message={err} onRetry={run} /></GlassCard>
+          ) : !res ? (
+            <GlassCard className={styles.empty}><EmptyState icon={<Users2 size={36} strokeWidth={1.4} />} title="No pairings yet" message="Choose a city and press Find pairings." /></GlassCard>
+          ) : !top ? (
+            <GlassCard className={styles.empty}><EmptyState icon={<Users2 size={36} strokeWidth={1.4} />} title="No pairs fit these filters" message="Try raising the budget, removing the anchor artist, or switching to All markets." /></GlassCard>
+          ) : (
+            <motion.div className={styles.results} style={{ opacity: busy ? .55 : 1 }} initial={{ opacity: 0, y: 12 }} animate={{ opacity: busy ? .55 : 1, y: 0 }} transition={{ type: 'spring', stiffness: 220, damping: 26 }}>
+              <GlassCard className={styles.feature}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <span className={styles.eyebrow}>Best pairing for {res.city}</span>
+                  <div className={styles.fNames}><span>{top.entity_a.name}</span><span className={styles.amp}>&amp;</span><span>{top.entity_b.name}</span></div>
+                  <div className={styles.sub}>{[top.entity_a.category, top.entity_b.category].filter((c, k, a) => c && a.indexOf(c) === k).join(' · ') || '—'}</div>
+                  {top.shared_genres.length > 0 && <div className={styles.genres}>{top.shared_genres.slice(0, 5).map(g => <span key={g} className={styles.genre}>{g}</span>)}</div>}
+                  <div className={styles.fee}>{top.combined_booking_fee_estimate != null ? <><b>{inrCompact(top.combined_booking_fee_estimate)}</b> combined fee</> : 'Booking fee not on file'}</div>
                 </div>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="pair-anchor">Anchor Artist (optional)</label>
-                <div className={styles.selectWrap}>
-                  <select id="pair-anchor" className={`input ${styles.select}`} value={anchorEntityId} onChange={e => setAnchorEntityId(e.target.value)}>
-                    <option value="">Rank all pairs...</option>
-                    {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="pair-budget">Combined Budget (₹, optional)</label>
-                <input
-                  id="pair-budget"
-                  className="input"
-                  type="number"
-                  min={0}
-                  placeholder="e.g. 2000000"
-                  value={budget}
-                  onChange={e => setBudget(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {error && (
-              <div className={styles.errorBox}>
-                <AlertCircle size={16} color="var(--negative)" />
-                <span className="t-callout" style={{ color: 'var(--negative)' }}>{error}</span>
-              </div>
-            )}
-
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ alignSelf: 'flex-start' }}>
-              {loading ? 'Finding pairings...' : 'Find Pairings'}
-            </button>
-          </form>
-        </GlassCard>
-
-        {result && (
-          <motion.div className={styles.resultWrap} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <div className={styles.summaryRow}>
-              <span className="t-footnote text-tertiary">{result.candidates_considered} candidates considered</span>
-              <span className="t-footnote text-tertiary">{result.pairs_matching_genre} pairs share a genre</span>
-              {result.anchor_entity && (
-                <span className="t-footnote text-tertiary">Anchored to <strong className="text-secondary">{result.anchor_entity.name}</strong></span>
-              )}
-            </div>
-
-            {result.recommendations.length === 0 ? (
-              <GlassCard className={styles.placeholder} delay={0.05}>
-                <Users2 size={32} color="var(--text-tertiary)" strokeWidth={1.5} />
-                <p className="t-headline text-tertiary" style={{ marginTop: 16 }}>No genre-compatible pairs found for this selection</p>
+                <Ring value={top.similarity_score} size={112} stroke={11}><div><div className={styles.ringNum}>{Math.round(top.similarity_score)}</div><div className={styles.ringLbl}>match</div></div></Ring>
               </GlassCard>
-            ) : (
-              <div className={styles.pairGrid}>
-                {result.recommendations.map((p, i) => (
-                  <GlassCard key={`${p.entity_a.id}-${p.entity_b.id}`} className={styles.pairCard} delay={0.05 + i * 0.03}>
-                    <div className={styles.pairArtists}>
-                      <div className={styles.artistBox}>
-                        <span className={`t-callout text-primary ${styles.artistName}`}>{p.entity_a.name}</span>
-                        <span className="t-caption text-tertiary">{p.entity_a.composite_score ?? '—'} score</span>
-                      </div>
-                      <Sparkles size={14} className={styles.pairDivider} />
-                      <div className={styles.artistBox}>
-                        <span className={`t-callout text-primary ${styles.artistName}`}>{p.entity_b.name}</span>
-                        <span className="t-caption text-tertiary">{p.entity_b.composite_score ?? '—'} score</span>
-                      </div>
-                    </div>
 
-                    <div className={styles.pairMeta}>
-                      <span className={styles.scoreBadge} style={{ color: scoreColor(p.similarity_score) }}>
-                        {p.similarity_score}%
-                      </span>
-                      <div className={styles.genreTags}>
-                        {p.shared_genres.map(g => <span key={g} className={styles.genreTag}>{g}</span>)}
+              {rest.length > 0 && (
+                <GlassCard className={styles.list}>
+                  {rest.map((p, i) => (
+                    <motion.div key={`${p.entity_a.id}-${p.entity_b.id}`} className={styles.prow} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(i, 8) * .035, duration: .3 }}>
+                      <span className={styles.rank}>{i + 2}</span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div className={styles.names}>{p.entity_a.name} <span className={styles.amp}>&amp;</span> {p.entity_b.name}</div>
+                        <div className={styles.sub}>{p.shared_genres.slice(0, 3).join(', ') || 'No shared genre tags'}{p.combined_booking_fee_estimate != null ? ` · ${inrCompact(p.combined_booking_fee_estimate)}` : ''}</div>
                       </div>
-                      {p.combined_booking_fee_estimate !== null && (
-                        <span className="t-caption text-tertiary">
-                          ~{new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(p.combined_booking_fee_estimate)} combined fee
-                        </span>
-                      )}
-                    </div>
-                  </GlassCard>
-                ))}
-              </div>
-            )}
-
-            <GlassCard style={{ padding: 18 }} delay={0.1}>
-              <div className={styles.noteBox}>
-                <Info size={15} color="var(--text-tertiary)" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p className="t-caption text-tertiary" style={{ lineHeight: 1.6 }}>{result.methodology}</p>
-              </div>
-            </GlassCard>
-          </motion.div>
-        )}
-
-        {!result && !loading && (
-          <GlassCard className={styles.placeholder} delay={0.1}>
-            <Users2 size={32} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-tertiary" style={{ marginTop: 16 }}>Select a city above to find pairing recommendations</p>
-          </GlassCard>
-        )}
+                      <span className={styles.score}>{Math.round(p.similarity_score)}</span>
+                    </motion.div>
+                  ))}
+                </GlassCard>
+              )}
+              <p className={styles.note}>{num(res.pairs_matching_genre)} genre matches from {num(res.candidates_considered)} artists{res.anchor_entity ? `, anchored on ${res.anchor_entity.name}` : ''}. {res.methodology}</p>
+            </motion.div>
+          )}
+        </div>
       </div>
-    </div>
+    </Page>
   );
 }

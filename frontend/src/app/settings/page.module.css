@@ -1,49 +1,9 @@
-.rowList {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 4px;
-  border-bottom: 1px solid var(--glass-border);
-}
-
-.row:last-child {
-  border-bottom: none;
-}
-
-.rowLeft {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 0;
-}
-
-.rowIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: var(--glass-fill);
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-.statusBadge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  flex-shrink: 0;
-}
+.wrap { max-width: 760px; display: flex; flex-direction: column; gap: 22px; }
+.section { display: flex; flex-direction: column; gap: 8px; }
+.sectionTitle { padding-left: 16px; text-transform: uppercase; letter-spacing: .06em; }
+.sectionNote { padding: 0 16px; }
+.iconBox { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; flex-shrink: 0; background: var(--fill-tertiary); color: var(--text-secondary); }
+.grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.status { display: inline-flex; align-items: center; gap: 5px; font: 600 .75rem var(--font-sans); flex-shrink: 0; }
+@media (max-width: 560px) { .tiles { grid-template-columns: 1fr; } .list-row-wrap { flex-wrap: wrap; } }

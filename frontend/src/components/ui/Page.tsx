@@ -24,7 +24,7 @@ export function Page({ title, subtitle, actions, children, fill = false, maxWidt
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
         style={fill
-          ? { height: 'calc(100vh - var(--topbar-height))', display: 'flex', flexDirection: 'column', minHeight: 0 }
+          ? { height: 'calc(100vh - var(--topbar-height) - 24px)', display: 'flex', flexDirection: 'column', minHeight: 0 }
           : { padding: '20px clamp(16px, 2.4vw, 32px) 56px', maxWidth, display: 'flex', flexDirection: 'column', gap: 18 }}
       >
         {actions && !fill && <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>{actions}</div>}

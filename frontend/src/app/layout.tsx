@@ -39,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           // the OS theme, so a system-dark visitor never sees a light
           // flash (or vice versa) before React hydrates.
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('liveiq-theme');if(!t){t=window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('liveiq-theme');if(!t){t='dark';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();`,
           }}
         />
       </head>

@@ -16,15 +16,15 @@
   --bg-grouped:    #0b0b0d;
 
   /* Ambient backdrop blobs (see body::before) */
-  --amb-1: rgba(10, 132, 255, 0.20);
-  --amb-2: rgba(255, 159, 10, 0.10);
-  --amb-3: rgba(48, 209, 88, 0.08);
+  --amb-1: rgba(10, 132, 255, 0.07);
+  --amb-2: rgba(255, 255, 255, 0.025);
+  --amb-3: rgba(255, 255, 255, 0.015);
 
   /* Glass */
-  --glass-fill:         rgba(44, 44, 46, 0.55);
-  --glass-fill-hover:   rgba(58, 58, 60, 0.62);
+  --glass-fill:         rgba(28, 28, 30, 0.72);
+  --glass-fill-hover:   rgba(36, 36, 38, 0.8);
   --glass-fill-strong:  rgba(28, 28, 30, 0.78);
-  --glass-border:       rgba(255, 255, 255, 0.09);
+  --glass-border:       rgba(255, 255, 255, 0.07);
   --glass-border-hover: rgba(255, 255, 255, 0.18);
   --glass-blur:         blur(30px) saturate(190%);
   --glass-shadow:       0 1px 0 rgba(255,255,255,0.06) inset, 0 10px 40px rgba(0,0,0,0.45);
@@ -55,8 +55,8 @@
   --neutral:      rgba(235, 235, 245, 0.32);
 
   /* Chart categorical palette (Apple system, ordered for contrast) */
-  --c1: #0a84ff; --c2: #30d158; --c3: #ff9f0a; --c4: #ff453a;
-  --c5: #64d2ff; --c6: #ffd60a; --c7: #bf5af2; --c8: #ac8e68;
+  --c1: #0a84ff; --c2: #5e9fe8; --c3: #8e8e93; --c4: #636366;
+  --c5: #3a6ea5; --c6: #aeaeb2; --c7: #48484a; --c8: #ff9f0a;
 
   --divider:        rgba(84, 84, 88, 0.45);
   --divider-strong: rgba(120, 120, 128, 0.45);
@@ -123,8 +123,8 @@
   --saffron:      #e07b00;  --saffron-dim:  rgba(255, 153, 51, 0.18);
   --neutral:      rgba(60, 60, 67, 0.3);
 
-  --c1: #007aff; --c2: #34c759; --c3: #ff9500; --c4: #ff3b30;
-  --c5: #32ade6; --c6: #e0b400; --c7: #af52de; --c8: #a2845e;
+  --c1: #007aff; --c2: #5aa0f0; --c3: #8e8e93; --c4: #aeaeb2;
+  --c5: #3a6ea5; --c6: #c7c7cc; --c7: #d1d1d6; --c8: #ff9500;
 
   --divider:        rgba(60, 60, 67, 0.14);
   --divider-strong: rgba(60, 60, 67, 0.26);
@@ -376,16 +376,16 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 10px;
-  border-radius: var(--radius-full);
-  font-size: 0.75rem;
+  padding: 2px 9px;
+  border-radius: 7px;
+  font-size: 0.6875rem;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 .badge-blue    { background: var(--accent-dim);    color: var(--accent); }
-.badge-green   { background: var(--positive-dim);  color: var(--positive); }
-.badge-red     { background: var(--negative-dim);  color: var(--negative); }
-.badge-amber   { background: var(--warning-dim);   color: var(--warning); }
+.badge-green   { background: var(--fill-tertiary); color: var(--positive); }
+.badge-red     { background: var(--fill-tertiary); color: var(--negative); }
+.badge-amber   { background: var(--fill-tertiary); color: var(--warning); }
 .badge-neutral { background: var(--glass-fill);    color: var(--text-secondary); border: 1px solid var(--glass-border); }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -600,13 +600,16 @@ body::before {
 }
 
 #main-content {
+  margin-right: 12px;
   min-height: 100vh;
   padding-top: 0 !important;      /* Topbar is sticky, in-flow */
   transition: margin-left var(--duration-base) var(--ease-out);
 }
 @media (max-width: 900px) {
-  #main-content { margin-left: 0 !important; }
+  #main-content { margin-left: 0 !important; margin-right: 0; padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
 }
+/* Rounded SF numerals for big figures — the iOS Weather/Fitness look. */
+.num-rounded { font-family: ui-rounded, 'SF Pro Rounded', var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
 
 .glass-card { border-radius: var(--radius-lg); }
 @media (hover: none) {
@@ -716,3 +719,11 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 
 /* Visually hidden */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ── Restraint layer: calm dark mode ── */
+.glass-card { box-shadow: 0 0 0 .5px var(--glass-border), 0 2px 8px rgba(0,0,0,.25); }
+:root[data-theme="light"] .glass-card { box-shadow: 0 0 0 .5px var(--glass-border), 0 1px 3px rgba(0,0,0,.05); }
+.recharts-cartesian-grid line { stroke: var(--divider) !important; stroke-dasharray: 0 !important; opacity: .5; }
+.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line { display: none; }
+.recharts-text { fill: var(--text-tertiary) !important; font-size: 11px !important; font-weight: 500; }
+.recharts-bar-rectangle path, .recharts-rectangle { rx: 6; }

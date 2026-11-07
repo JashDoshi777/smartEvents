@@ -1,194 +1,148 @@
 'use client';
 
 import useSWR from 'swr';
+import Link from 'next/link';
+import { Ticket, Info, Calculator } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { motion } from 'framer-motion';
-import {
-  Ticket, TrendingUp, AlertCircle, CheckCircle,
-  Info, Music2
-} from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { getDashboardSummary } from '@/lib/api';
+import { SkeletonCard } from '@/components/ui/Skeleton';
+import { EmptyState, ErrorState } from '@/components/ui/States';
+import { getDashboardSummary, type UpcomingEvent } from '@/lib/api';
+import { dateIN, inr, inrCompact, num } from '@/lib/format';
 import styles from './page.module.css';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fillColor(pct: number | null) {
-  if (!pct) return 'var(--text-tertiary)';
-  if (pct >= 70) return 'var(--positive)';
-  if (pct >= 50) return 'var(--accent)';
-  return 'var(--negative)';
+const DAY = 86_400_000;
+function daysUntil(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? null : Math.ceil((t - Date.now()) / DAY);
+}
+function price(e: UpcomingEvent) {
+  const { min_price: a, max_price: b } = e;
+  if (a == null && b == null) return '—';
+  if (a != null && b != null && a !== b) return `${inr(a)} – ${inr(b)}`;
+  return inr(a ?? b);
+}
+function sourceLabel(s: string | null) {
+  if (!s) return 'Platform';
+  return s === 'predicthq' ? 'PredictHQ' : s.charAt(0).toUpperCase() + s.slice(1);
+}
+function whenLabel(e: UpcomingEvent) {
+  const d = daysUntil(e.event_date);
+  if (d == null) return { text: '—', warn: false };
+  if (d < 0) return { text: 'Past', warn: false };
+  if (d === 0) return { text: 'Today', warn: true };
+  return { text: d === 1 ? 'Tomorrow' : `In ${d} days`, warn: d <= 14 };
 }
 
-function fillStatus(pct: number | null) {
-  if (!pct) return { label: 'No data', icon: <Info size={13} />, color: 'var(--text-tertiary)' };
-  if (pct >= 70) return { label: 'On track', icon: <CheckCircle size={13} />, color: 'var(--positive)' };
-  if (pct >= 50) return { label: 'Monitor', icon: <AlertCircle size={13} />, color: 'var(--accent)' };
-  return { label: 'Action needed', icon: <AlertCircle size={13} />, color: 'var(--negative)' };
+function GlassTip({ active, payload }: { active?: boolean; payload?: { payload: { name: string; value: number } }[] }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="glass-card" style={{ padding: '8px 12px', fontSize: '.8125rem' }}>
+      <div style={{ fontWeight: 600 }}>{p.name}</div>
+      <div className="text-secondary tnum">{inr(p.value)}</div>
+    </div>
+  );
 }
-
-function fmtPrice(min: number | null, max: number | null) {
-  if (!min && !max) return '—';
-  if (min && max && min !== max) return `₹${min.toLocaleString('en-IN')} – ₹${max.toLocaleString('en-IN')}`;
-  return `₹${(min ?? max)!.toLocaleString('en-IN')}`;
-}
-
-function daysUntil(dateStr: string | null): number | null {
-  if (!dateStr) return null;
-  const diff = new Date(dateStr).getTime() - Date.now();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-}
-
-// ── Deal Modeler inputs ───────────────────────────────────────────────────────
-// No hardcoded values — the modeler is shown as a form placeholder that sends to pricing endpoint
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Events / Fill Rate Monitor Page
-// ═══════════════════════════════════════════════════════════════════════════════
 
 export default function EventsPage() {
-  const { data: summary, isLoading } = useSWR(
-    'dashboard/events', getDashboardSummary,
-    { refreshInterval: 60000, shouldRetryOnError: false }
-  );
-
-  const events = summary?.upcoming_events ?? [];
+  const { data, error, isLoading, mutate } = useSWR('dashboard/events', getDashboardSummary, { refreshInterval: 60000 });
+  const events = data?.upcoming_events ?? [];
+  const totalEvents = data?.hero.total_events;
+  const priced = events.filter(e => e.min_price != null || e.max_price != null);
+  const upcoming = events.filter(e => { const d = daysUntil(e.event_date); return d != null && d >= 0; }).length;
+  const within30 = events.filter(e => { const d = daysUntil(e.event_date); return d != null && d >= 0 && d <= 30; }).length;
+  const noVenue = events.filter(e => !e.venue && !e.city).length;
+  const cities = [...(data?.city_heat ?? [])].sort((a, b) => (b.music_score ?? 0) + (b.nightlife_score ?? 0) - (a.music_score ?? 0) - (a.nightlife_score ?? 0)).slice(0, 8);
+  const chart = priced.map(e => ({ name: e.name.length > 26 ? e.name.slice(0, 25) + '…' : e.name, value: (e.min_price ?? e.max_price) as number }));
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Event Fill Rate Monitor" subtitle="Sales velocity, ticket inventory, and action triggers" />
-
-      <div className={styles.page}>
-
-        {/* Summary banner */}
-        <motion.div
-          className={styles.banner}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-        >
-          {[
-            { label: 'Events tracked', value: events.length || '—', sub: 'from Ticketmaster & Insider' },
-            { label: 'On sale now', value: events.filter(e => e.min_price !== null).length || '—', sub: 'with ticket pricing' },
-            { label: 'This month', value: events.filter(e => {
-              const d = daysUntil(e.event_date);
-              return d !== null && d >= 0 && d <= 30;
-            }).length || '—', sub: 'within 30 days' },
-          ].map(({ label, value, sub }, i) => (
-            <div key={label} className={styles.bannerStat}>
-              <span style={{ fontSize: '2rem', fontWeight: 800, letterSpacing: '-0.05em', color: 'var(--text-primary)', lineHeight: 1 }}>{value}</span>
-              <span className="t-label text-primary" style={{ fontWeight: 600 }}>{label}</span>
-              <span className="t-caption text-tertiary">{sub}</span>
+    <Page
+      title="Fill-Rate Monitor"
+      subtitle="Events, ticket pricing and sell-through readiness"
+      actions={<Link href="/events/model" className="btn btn-tinted btn-sm" style={{ textDecoration: 'none' }}><Calculator size={14} /> Deal modeler</Link>}
+    >
+      {error && !data ? (
+        <GlassCard><ErrorState message="Couldn’t load events. Check that the API is reachable." onRetry={() => mutate()} /></GlassCard>
+      ) : isLoading && !data ? (
+        <div className={styles.bento}>
+          <div className={styles.s5}><SkeletonCard lines={2} height={240} /></div>
+          <div className={styles.s7}><SkeletonCard lines={4} height={240} /></div>
+          <div className={styles.s12}><SkeletonCard lines={5} height={300} /></div>
+        </div>
+      ) : (
+        <div className={styles.bento}>
+          <GlassCard className={`${styles.hero} ${styles.s5}`}>
+            <span className={styles.eyebrow}>Events tracked</span>
+            <div className={styles.big}>{num(totalEvents)}</div>
+            <div className={styles.heroStats}>
+              <div><b>{events.length ? upcoming : '—'}</b><span>upcoming</span></div>
+              <div><b>{events.length ? within30 : '—'}</b><span>within 30 days</span></div>
+              <div><b>{num(data?.hero.active_cities)}<small>/{num(data?.hero.total_cities)}</small></b><span>live cities</span></div>
             </div>
-          ))}
-        </motion.div>
-
-        {/* Events list with fill rate monitor */}
-        {isLoading ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="skeleton" style={{ height: 200, borderRadius: 20 }} />
-            ))}
-          </div>
-        ) : events.length === 0 ? (
-          <GlassCard style={{ padding: 48, textAlign: 'center' }} delay={0.1}>
-            <Music2 size={36} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-tertiary" style={{ marginTop: 16 }}>No events synced yet</p>
-            <p className="t-callout text-tertiary" style={{ marginTop: 8, maxWidth: 360, margin: '8px auto 0', lineHeight: 1.65 }}>
-              The event sync worker pulls from Ticketmaster and Insider every 4 hours. Start the worker, or add events manually via the admin API.
-            </p>
           </GlassCard>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {events.map((e, i) => {
-              const days = daysUntil(e.event_date);
-              // Fill rate is not tracked yet — the fill-rate worker (Sprint 6A)
-              // will populate Event.fill_rate from real ticket sales. Until then
-              // we show "no data" rather than a fabricated estimate.
-              const simFill: number | null = null;
-              const status = fillStatus(simFill);
 
+          <GlassCard className={`${styles.pad} ${styles.s7}`} delay={.04}>
+            <div className={styles.head}><h2 className="t-headline">Entry ticket price</h2><span className="t-footnote text-tertiary">lowest tier per event</span></div>
+            {chart.length === 0 ? (
+              <EmptyState title="No pricing yet" message="None of these events list a ticket price." />
+            ) : (
+              <div className={styles.chartBox}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chart} margin={{ top: 6, right: 4, left: -8, bottom: 0 }}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis dataKey="name" tick={false} axisLine={false} tickLine={false} />
+                    <YAxis tickFormatter={v => inrCompact(v)} axisLine={false} tickLine={false} width={56} />
+                    <Tooltip content={<GlassTip />} cursor={{ fill: 'var(--fill-quaternary)' }} />
+                    <Bar dataKey="value" fill="var(--c1)" radius={[9, 9, 3, 3]} maxBarSize={44} animationDuration={700} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </GlassCard>
+
+          <GlassCard className={`${styles.listCard} ${styles.s7}`} delay={.08}>
+            <div className={styles.listHead}><h2 className="t-headline">Events on record</h2><span className="t-footnote text-tertiary">earliest first</span></div>
+            {events.length === 0 ? (
+              <EmptyState icon={<Ticket size={34} strokeWidth={1.4} />} title="No events yet" message="Events appear here once the District and PredictHQ sync workers have run." />
+            ) : events.map(e => {
+              const w = whenLabel(e);
               return (
-                <GlassCard key={e.id} delay={0.08 + i * 0.06}>
-                  <div className={styles.eventCard}>
-                    {/* Left: meta */}
-                    <div className={styles.eventMeta}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <Ticket size={14} color="var(--accent)" />
-                        <p className="t-callout" style={{ fontWeight: 700, color: 'var(--accent)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                          {e.source ?? 'Platform'}
-                        </p>
-                      </div>
-                      <h3 className="t-title2 text-primary" style={{ fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1.2 }}>
-                        {e.name}
-                      </h3>
-                      <p className="t-callout text-tertiary" style={{ marginTop: 6 }}>
-                        {[e.venue, e.city].filter(Boolean).join(' · ')}
-                      </p>
-                      {e.event_date && (
-                        <p className="t-footnote text-secondary" style={{ marginTop: 4 }}>
-                          {new Date(e.event_date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}
-                          {days !== null && days >= 0 && <span style={{ color: days <= 14 ? 'var(--warning)' : 'var(--text-tertiary)' }}> · {days} days away</span>}
-                        </p>
-                      )}
-                      <p className="t-callout text-primary" style={{ fontWeight: 700, marginTop: 10 }}>
-                        {fmtPrice(e.min_price, e.max_price)}
-                      </p>
-                    </div>
-
-                    {/* Center: fill rate ring + status */}
-                    <div className={styles.fillCenter}>
-                      <div className={styles.fillRing}>
-                        <svg width={90} height={90} viewBox="0 0 90 90" style={{ transform: 'rotate(-90deg)' }}>
-                          <circle cx={45} cy={45} r={38} fill="none" stroke="var(--divider)" strokeWidth={6} />
-                          {simFill !== null && (
-                            <motion.circle
-                              cx={45} cy={45} r={38} fill="none"
-                              stroke={fillColor(simFill)} strokeWidth={6}
-                              strokeDasharray={`${(simFill / 100) * 238.76} 238.76`}
-                              strokeLinecap="round"
-                              initial={{ strokeDasharray: '0 238.76' }}
-                              animate={{ strokeDasharray: `${(simFill / 100) * 238.76} 238.76` }}
-                              transition={{ duration: 0.8, delay: 0.2 + i * 0.1, ease: [0.25, 0.46, 0.45, 0.94] }}
-                            />
-                          )}
-                        </svg>
-                        <div className={styles.fillLabel}>
-                          <span style={{ fontSize: '1.2rem', fontWeight: 800, letterSpacing: '-0.04em', color: fillColor(simFill) }}>
-                            {simFill !== null ? `${simFill}%` : '—'}
-                          </span>
-                          <span className="t-caption text-tertiary" style={{ fontSize: '0.625rem' }}>projected</span>
-                        </div>
-                      </div>
-                      <div className={styles.statusBadge} style={{ color: status.color, background: status.color + '18', borderColor: status.color + '30' }}>
-                        {status.icon} {status.label}
-                      </div>
-                    </div>
-
-                    {/* Right: sales velocity (not yet tracked) */}
-                    <div className={styles.velocityWrap}>
-                      <p className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.6875rem', marginBottom: 8 }}>
-                        Sales Velocity
-                      </p>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 90 }}>
-                        <Info size={13} color="var(--text-tertiary)" />
-                        <span className="t-caption text-tertiary">Not tracked yet — pending fill-rate worker</span>
-                      </div>
-
-                      {/* Action buttons — contextual */}
-                      <div className={styles.actions}>
-                        <button className={styles.actionBtn}>
-                          <TrendingUp size={12} /> Price optimizer
-                        </button>
-                      </div>
-                    </div>
+                <div key={e.id} className={styles.erow}>
+                  <div style={{ minWidth: 0 }}>
+                    <div className={styles.evName} title={e.name}>{e.name}</div>
+                    <div className={styles.evSub}>{[e.venue, e.city].filter(Boolean).join(', ') || 'Venue to be announced'} · {dateIN(e.event_date, { day: 'numeric', month: 'short' })}{w.text !== '—' && <> · <span style={{ color: w.warn ? 'var(--warning)' : undefined }}>{w.text}</span></>}</div>
                   </div>
-                </GlassCard>
+                  <div className={styles.eRight}>
+                    <b className="tnum">{price(e)}</b>
+                    <span className={styles.tag}>{sourceLabel(e.source)}{e.category ? ` · ${e.category}` : ''}</span>
+                  </div>
+                </div>
               );
             })}
-          </div>
-        )}
-      </div>
-    </div>
+          </GlassCard>
+
+          <GlassCard className={`${styles.pad} ${styles.s5}`} delay={.12}>
+            <div className={styles.head}><h2 className="t-headline">City demand</h2><span className="t-footnote text-tertiary">music + nightlife, 0 to 100</span></div>
+            {cities.length === 0 ? <EmptyState title="No city scores" /> : cities.map(c => {
+              const sc = ((c.music_score ?? 0) + (c.nightlife_score ?? 0)) / 2;
+              return (
+                <div key={c.city} className={styles.cityRow}>
+                  <span style={{ width: 88, fontWeight: 500, fontSize: '.9375rem' }}>{c.city}</span>
+                  <div className={styles.bar}><motion.div className={styles.barFill} initial={{ width: 0 }} animate={{ width: `${Math.min(100, sc)}%` }} transition={{ type: 'spring', stiffness: 80, damping: 18 }} style={{ background: c.active_on_district ? 'var(--accent)' : 'var(--text-tertiary)' }} /></div>
+                  <span className="tnum" style={{ width: 28, textAlign: 'right', fontSize: '.875rem', fontFamily: 'ui-rounded, var(--font-sans)', fontWeight: 600 }}>{sc ? sc.toFixed(0) : '—'}</span>
+                </div>
+              );
+            })}
+            <p className="t-caption text-tertiary" style={{ marginTop: 10 }}>Blue: live on District. Gray: expansion opportunity.</p>
+          </GlassCard>
+
+          <p className={`${styles.note} ${styles.s12}`}><Info size={14} /> Live sell-through isn’t reported by the ticketing sources yet, so fill rate is not shown rather than estimated. Use the <Link href="/events/model" style={{ color: 'var(--accent)' }}>deal modeler</Link> for a predicted fill rate on a proposed booking.{noVenue > 0 && <> {noVenue} of these events have no venue or city on record.</>}</p>
+        </div>
+      )}
+    </Page>
   );
 }

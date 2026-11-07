@@ -1,399 +1,289 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  AreaChart, Area, ResponsiveContainer, Tooltip, CartesianGrid, XAxis, YAxis,
-  ReferenceLine
-} from 'recharts';
-import {
-  IndianRupee, TrendingUp, MapPin, Users, Zap,
-  CheckCircle, AlertCircle, Info, ChevronDown
-} from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ArrowDownRight, ArrowUpRight, ChevronRight, Lock, Search, Sparkles, TriangleAlert } from 'lucide-react';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { optimizePrice, getPortfolio, getCities, PricingResponse } from '@/lib/api';
+import { Sheet } from '@/components/ui/Sheet';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/States';
+import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { useMarketScope } from '@/components/providers/MarketScopeProvider';
+import { Ring, ROUNDED } from '@/components/insights/Ring';
+import { inr, inrCompact, num } from '@/lib/format';
+import {
+  ApiError, EntitySearchResult, PricingResult, getElasticityCurve, getMarketCities, getPortfolio,
+  getPriceBenchmarkTable, optimizePriceStrict, searchEntities,
+} from '@/lib/api';
 import styles from './page.module.css';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+const CAP = { min: 100, max: 100000 };
+const PRICE = { min: 100, max: 50000 };
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const CAP_PRESETS = [800, 2000, 8000, 15000, 50000];
+const PRICE_PRESETS = [800, 1500, 3000, 5000, 8000];
 
-function fmt(n: number) {
-  return `₹${n.toLocaleString('en-IN')}`;
+const toSlider = (v: number, lo: number, hi: number) => Math.round((Math.log(Math.max(v, lo) / lo) / Math.log(hi / lo)) * 1000);
+const fromSlider = (t: number, lo: number, hi: number, step: number) => Math.round((lo * Math.pow(hi / lo, t / 1000)) / step) * step;
+const guessCategory = (cat: string | null | undefined, keys: string[]) => keys.find(k => (cat ?? '').toLowerCase().includes(k)) ?? 'music';
+
+type Picked = { id: string; name: string; category: string | null; is_international: boolean };
+
+function LogRange({ value, lo, hi, step, onChange, label }: { value: number; lo: number; hi: number; step: number; onChange: (v: number) => void; label: string }) {
+  return <input type="range" className={styles.range} aria-label={label} min={0} max={1000} value={toSlider(value || lo, lo, hi)} onChange={e => onChange(Math.min(hi, Math.max(lo, fromSlider(+e.target.value, lo, hi, step))))} />;
 }
 
-// ── Recommendation card ───────────────────────────────────────────────────────
-
-function RecommendationCard({ data }: { data: PricingResponse }) {
-  const rec   = data.recommendation;
-  const sigs  = data.signals ?? {};
-  const bench = data.benchmarks ?? {};
-
-  const isGood = rec?.recommended_price && rec?.recommended_price > 0;
-  const diff   = rec?.proposed_price && rec?.recommended_price
-    ? rec.recommended_price - rec.proposed_price
-    : null;
-
-  // Sensitivity curve only exists when the ML pricing engine ran (model: "ml_gbr").
-  // The rule-based fallback path returns an empty curve — show nothing rather
-  // than fabricate one.
-  const sensitivity = rec?.sensitivity_curve ?? [];
-
+function PriceLadder({ bench, proposed, recommended }: { bench: { floor: number; sweet_spot: number; premium: number; ultra_premium: number }; proposed: number | null; recommended: number | null }) {
+  const lo = bench.floor * 0.6, hi = bench.ultra_premium * 1.1;
+  const pos = (v: number) => `${Math.max(2, Math.min(98, ((Math.log(v) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * 100))}%`;
   return (
-    <motion.div
-      className={styles.recWrap}
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease: [0.25, 0.46, 0.45, 0.94] }}
-    >
-      {/* Hero recommendation */}
-      <GlassCard className={styles.recHero} delay={0}>
-        <div className={styles.recTop}>
-          <div>
-            <p className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: '0.6875rem', marginBottom: 6 }}>
-              AI Recommended Price
-            </p>
-            <div className={styles.recPrice}>
-              <span className={styles.priceNum}>
-                {isGood ? fmt(rec.recommended_price) : '—'}
-              </span>
-              {diff !== null && (
-                <span className={styles.priceDiff} style={{ color: diff > 0 ? 'var(--positive)' : diff < 0 ? 'var(--negative)' : 'var(--text-tertiary)' }}>
-                  {diff > 0 ? '+' : ''}{fmt(Math.abs(diff))} vs your price
-                </span>
-              )}
-            </div>
-          </div>
-          <div className={styles.recBadge} style={{
-            background: rec?.confidence_level === 'High' ? 'var(--positive-dim)' : 'var(--accent-dim)',
-            borderColor: rec?.confidence_level === 'High' ? 'rgba(52,199,89,0.3)' : 'rgba(10,132,255,0.3)',
-          }}>
-            {rec?.confidence_level === 'High'
-              ? <><CheckCircle size={14} color="var(--positive)" /> <span style={{ color: 'var(--positive)', fontWeight: 700 }}>High Confidence</span></>
-              : <><AlertCircle size={14} color="var(--accent)" /> <span style={{ color: 'var(--accent)', fontWeight: 700 }}>Medium Confidence</span></>
-            }
-          </div>
-        </div>
-
-        {/* Key metrics */}
-        <div className={styles.recMetrics}>
-          {[
-            { label: 'Demand Score', value: sigs?.demand_score != null ? `${sigs.demand_score}/100` : '—' },
-            { label: 'City Multiplier', value: sigs?.city_multiplier != null ? `${sigs.city_multiplier}×` : '—' },
-            { label: 'Season Factor', value: sigs?.season_factor != null ? `${sigs.season_factor}×` : '—' },
-            { label: 'Expected Fill', value: rec?.expected_fill_pct != null ? `${rec.expected_fill_pct}%` : '—' },
-          ].map(({ label, value }) => (
-            <div key={label} className={styles.recMetricBox}>
-              <span className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.6875rem' }}>{label}</span>
-              <span className="t-title2 text-primary" style={{ fontWeight: 800, letterSpacing: '-0.04em' }}>{value}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* AI reasoning */}
-        {rec?.reasoning && (
-          <div className={styles.reasoning}>
-            <Zap size={13} color="var(--accent)" />
-            <p className="t-callout text-secondary" style={{ lineHeight: 1.65 }}>{rec.reasoning}</p>
-          </div>
-        )}
-      </GlassCard>
-
-      <div className={styles.recGrid}>
-        {/* Price sensitivity chart — only when the ML engine returned a real curve */}
-        <GlassCard className={styles.sensitivityCard} delay={0.08}>
-          <h3 className="t-headline text-primary" style={{ marginBottom: 4 }}>Price Sensitivity</h3>
-          <p className="t-footnote text-tertiary" style={{ marginBottom: 14 }}>Expected attendance at each price point</p>
-          {sensitivity.length > 0 ? (
-            <ResponsiveContainer width="100%" height={160}>
-              <AreaChart data={sensitivity} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="sensGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.22} />
-                    <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" vertical={false} />
-                <XAxis
-                  dataKey="price"
-                  tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }}
-                  axisLine={false} tickLine={false}
-                  tickFormatter={(v: number) => `₹${(v / 1000).toFixed(1)}k`}
-                />
-                <YAxis
-                  domain={[0, 100]}
-                  tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }}
-                  axisLine={false} tickLine={false}
-                  tickFormatter={(v: number) => `${v}%`}
-                />
-                <Tooltip
-                  contentStyle={{ background: 'var(--bg-overlay)', border: '1px solid var(--glass-border)', borderRadius: 10, fontSize: 11 }}
-                  formatter={(v: any) => [`${v}%`, 'Attendance'] as any}
-                  labelFormatter={(v: any) => fmt(Number(v))}
-                />
-                {rec?.recommended_price && (
-                  <ReferenceLine x={rec.recommended_price} stroke="var(--accent)" strokeDasharray="4 2" strokeWidth={1.5} />
-                )}
-                <Area
-                  type="monotone" dataKey="attendance_pct"
-                  stroke="var(--accent)" strokeWidth={2}
-                  fill="url(#sensGrad)" dot={false}
-                  activeDot={{ r: 3, strokeWidth: 0, fill: 'var(--accent)' }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 160 }}>
-              <Info size={14} color="var(--text-tertiary)" />
-              <span className="t-caption text-tertiary">
-                Not available for this recommendation — the ML pricing model didn&apos;t run (used rule-based fallback instead).
-              </span>
-            </div>
-          )}
-        </GlassCard>
+    <div>
+      <div className={styles.ladder}>
+        <div className={styles.ladderTrack}><div className={styles.ladderBand} style={{ left: pos(bench.sweet_spot * 0.8), right: `calc(100% - ${pos(bench.premium)})` }} /></div>
+        {proposed != null && <div className={`${styles.pin} ${styles.pinLow}`} style={{ left: pos(proposed), color: 'var(--text-secondary)' }}><span className={styles.pinStem} style={{ background: 'var(--text-secondary)' }} />Yours {inrCompact(proposed)}</div>}
+        {recommended != null && <div className={styles.pin} style={{ left: pos(recommended), color: 'var(--accent)' }}>Optimal {inrCompact(recommended)}<span className={styles.pinStem} style={{ background: 'var(--accent)' }} /></div>}
       </div>
-
-      {/* Benchmarks */}
-      {bench && Object.keys(bench).length > 0 && (
-        <GlassCard className={styles.benchCard} delay={0.16}>
-          <h3 className="t-headline text-primary" style={{ marginBottom: 12 }}>Market Benchmarks</h3>
-          <div className={styles.benchGrid}>
-            {Object.entries(bench).map(([k, v]) => (
-              <div key={k} className={styles.benchItem}>
-                <span className="t-footnote text-tertiary">{k.replace(/_/g, ' ')}</span>
-                <span className="t-callout text-primary" style={{ fontWeight: 700 }}>{typeof v === 'number' ? fmt(v) : String(v)}</span>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-      )}
-    </motion.div>
+      <div className={styles.ticks}><span>Floor {inrCompact(bench.floor)}</span><span>Sweet spot {inrCompact(bench.sweet_spot)}</span><span>Premium {inrCompact(bench.premium)}</span><span>Ultra {inrCompact(bench.ultra_premium)}</span></div>
+    </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Pricing Optimizer Page
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const MARKETS = ['All', 'India', 'Global'] as const;
-type MarketFilter = typeof MARKETS[number];
+function ActPicker({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (e: Picked) => void }) {
+  const { isIndia } = useMarketScope();
+  const [q, setQ] = useState('');
+  const [dq, setDq] = useState('');
+  useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 250); return () => clearTimeout(t); }, [q]);
+  const portfolio = useSWR(open ? 'pricing-portfolio' : null, () => getPortfolio());
+  const search = useSWR(open && dq.length >= 2 ? ['pricing-search', dq] : null, () => searchEntities(dq, 20));
+  const list: Picked[] = dq.length >= 2
+    ? (search.data?.results ?? []).map((r: EntitySearchResult) => ({ id: r.id, name: r.name, category: r.category, is_international: r.is_international }))
+    : (portfolio.data?.portfolio ?? []).filter(p => !isIndia || !p.is_international).slice(0, 40).map(p => ({ id: p.id, name: p.name, category: p.category, is_international: p.is_international }));
+  const loading = dq.length >= 2 ? search.isLoading : portfolio.isLoading;
+  return (
+    <Sheet open={open} onClose={onClose} title="Choose an act">
+      <div style={{ position: 'relative' }}>
+        <Search size={15} style={{ position: 'absolute', left: 12, top: 15, color: 'var(--text-tertiary)' }} />
+        <input autoFocus className={`input ${styles.pickerSearch}`} style={{ paddingLeft: 36 }} placeholder="Search artists, comedians, bands" aria-label="Search acts" value={q} onChange={e => setQ(e.target.value)} />
+      </div>
+      <div className={styles.pickList}>
+        {loading ? <Skeleton height={52} radius={12} style={{ margin: '6px 0' }} /> : list.length === 0 ? <EmptyState title="No acts found" message="Try a different name." /> : list.map(e => (
+          <button key={e.id} className={styles.pick} onClick={() => { onPick(e); onClose(); setQ(''); }}>
+            <div style={{ flex: 1, minWidth: 0 }}><p className="t-callout" style={{ fontWeight: 600 }}>{e.name}</p><p className="t-caption text-tertiary">{e.category ?? '—'}{e.is_international ? ' · International' : ' · India'}</p></div>
+            <ChevronRight size={16} color="var(--text-tertiary)" />
+          </button>
+        ))}
+      </div>
+    </Sheet>
+  );
+}
 
 export default function PricingPage() {
-  const [entityId,   setEntityId]   = useState('');
-  const [city,       setCity]       = useState('');
-  const [capacity,   setCapacity]   = useState('');
-  const [price,      setPrice]      = useState('');
-  const [category,   setCategory]   = useState('');
-  const [market,     setMarket]     = useState<MarketFilter>('All');
-  const [result,     setResult]     = useState<PricingResponse | null>(null);
-  const [loading,    setLoading]    = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
+  const { user } = useAuth();
+  const toast = useToast();
+  const { data: citiesData } = useSWR('market-cities', getMarketCities);
+  const { data: bm } = useSWR('price-benchmarks', getPriceBenchmarkTable);
+  const cities = citiesData?.cities.map(c => c.name) ?? [];
+  const catKeys = Object.keys(bm?.benchmarks ?? {});
 
-  const { data: portfolio } = useSWR('portfolio/pricing', () => getPortfolio(), { shouldRetryOnError: false });
-  const { data: citiesData } = useSWR('cities/pricing', () => getCities(), { shouldRetryOnError: false });
+  const [act, setAct] = useState<Picked | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
+  const [city, setCity] = useState('Mumbai');
+  const [category, setCategory] = useState('');
+  const [month, setMonth] = useState('');
+  const [capacity, setCapacity] = useState('8000');
+  const [price, setPrice] = useState('3000');
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<PricingResult | null>(null);
+  const [failure, setFailure] = useState<{ status: number; message: string } | null>(null);
 
-  const allEntities = portfolio?.portfolio ?? [];
-  const indiaCount = allEntities.filter(e => !e.is_international).length;
-  const globalCount = allEntities.filter(e => e.is_international).length;
-  const entities = allEntities.filter(e => {
-    if (market === 'India') return !e.is_international;
-    if (market === 'Global') return e.is_international;
-    return true;
-  });
-  const cities   = citiesData?.cities ?? [];
+  const capN = Number(capacity), priceN = Number(price);
+  const errors = {
+    act: act ? '' : 'Choose an act to price.',
+    capacity: Number.isInteger(capN) && capN >= CAP.min && capN <= CAP.max ? '' : `Capacity must be a whole number between ${num(CAP.min)} and ${num(CAP.max)}.`,
+    price: priceN >= PRICE.min && priceN <= PRICE.max ? '' : `Price must be between ${inr(PRICE.min)} and ${inr(PRICE.max)}.`,
+  };
+  const valid = !errors.act && !errors.capacity && !errors.price;
 
-  async function handleSubmit(e: React.FormEvent) {
+  const catKey = category || guessCategory(act?.category, catKeys);
+  const bench = bm?.benchmarks[catKey];
+  const cityMult = bm?.city_multipliers[city.toLowerCase()];
+
+  // Viewer-safe live preview: price by city (GET endpoint is not role-gated)
+  const elasticity = useSWR(act && !errors.price ? ['elasticity', act.id, priceN] : null, () => getElasticityCurve(act!.id, priceN), { keepPreviousData: true });
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!entityId || !city || !capacity || !price) return;
-
-    setLoading(true);
-    setError(null);
+    setTouched(true);
+    if (!valid || !act) return;
+    setBusy(true); setFailure(null);
     try {
-      const res = await optimizePrice({
-        entity_id:        entityId,
-        city,
-        venue_capacity:   Number(capacity),
-        proposed_price:   Number(price),
-        category:         category || undefined,
-      });
+      const res = await optimizePriceStrict({ entity_id: act.id, city, venue_capacity: capN, proposed_price: priceN, category: category || undefined, event_date_month: month ? Number(month) : undefined });
       setResult(res);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to get pricing recommendation. Ensure the backend is running.');
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      setResult(null);
+      setFailure({ status, message: err instanceof Error ? err.message : 'Something went wrong.' });
+      if (status !== 403) toast('Couldn’t optimize price', 'error');
+    } finally { setBusy(false); }
   }
 
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Pricing Optimizer" subtitle="Signal-based ticket price recommendation for every act and city" />
+  const rec = result?.recommendation;
+  const delta = rec ? rec.recommended_price - rec.proposed_price : null;
+  const deltaPct = rec && rec.proposed_price ? (delta! / rec.proposed_price) * 100 : null;
+  const signals = result ? [
+    ['Composite demand score', `${result.signals.composite_score}/100`],
+    ['Search interest (Google Trends)', `${result.signals.google_trend_score}/100`],
+    ['City price multiplier', `${result.signals.city_multiplier}×`],
+    ['Venue capacity factor', `${result.signals.capacity_factor}×`],
+    ['Season factor', `${result.signals.season_factor}×`],
+    ['International premium', `${result.signals.international_factor}×`],
+  ] : [];
+  const curve = useMemo(() => (elasticity.data?.elasticity_curve ?? []).slice(0, 12), [elasticity.data]);
+  const maxCurve = Math.max(1, ...curve.map(c => c.optimal_price));
 
-      <div className={styles.page}>
-        {/* Form */}
-        <GlassCard className={styles.formCard} delay={0.04}>
-          <div className={styles.formHeader}>
-            <IndianRupee size={18} color="var(--accent)" />
-            <div>
-              <h2 className="t-headline text-primary">Configure Event</h2>
-              <p className="t-footnote text-tertiary">Select the artist, city, venue capacity, and your proposed price</p>
+  return (
+    <Page title="Pricing" subtitle="ML ticket-price optimizer · all prices in ₹">
+      <div className={styles.layout}>
+        <form className={styles.form} onSubmit={submit} noValidate>
+          <div>
+            <p className={styles.groupLabel}>Event</p>
+            <div className={styles.group}>
+              <button type="button" className={styles.row} onClick={() => setPickOpen(true)} data-testid="act-picker">
+                <span className={styles.rowLabel}>Act</span>
+                <span className={styles.rowVal} style={{ color: act ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{act?.name ?? 'Choose'} <ChevronRight size={15} color="var(--text-tertiary)" /></span>
+              </button>
+              <div className={styles.row}>
+                <label className={styles.rowLabel} htmlFor="pr-city">City</label>
+                <select id="pr-city" className={styles.plainSelect} value={city} onChange={e => setCity(e.target.value)}>{(cities.length ? cities : [city]).map(c => <option key={c}>{c}</option>)}</select>
+              </div>
+              <div className={styles.row}>
+                <label className={styles.rowLabel} htmlFor="pr-cat">Category</label>
+                <select id="pr-cat" className={styles.plainSelect} value={category} onChange={e => setCategory(e.target.value)}>
+                  <option value="">Auto ({catKey})</option>{catKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div className={styles.row}>
+                <label className={styles.rowLabel} htmlFor="pr-month">Month</label>
+                <select id="pr-month" className={styles.plainSelect} value={month} onChange={e => setMonth(e.target.value)}>
+                  <option value="">Any</option>{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+                </select>
+              </div>
             </div>
+            {touched && errors.act && <p className={styles.err} role="alert">{errors.act}</p>}
           </div>
 
-          <form onSubmit={handleSubmit} className={styles.form}>
-            {/* Market toggle */}
-            <div className={styles.filterRow} style={{ marginBottom: 4 }}>
-              {MARKETS.map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  className={`${styles.filterChip} ${market === m ? styles.filterActive : ''}`}
-                  onClick={() => { setMarket(m); setEntityId(''); }}
-                >
-                  {m}
-                  {m === 'India' && ` (${indiaCount})`}
-                  {m === 'Global' && ` (${globalCount})`}
-                </button>
-              ))}
-            </div>
-
-            <div className={styles.formGrid}>
-              {/* Artist selector */}
-              <div className={styles.field}>
-                <label className={styles.label}>Artist / Act</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    className={`input ${styles.select}`}
-                    value={entityId}
-                    onChange={e => setEntityId(e.target.value)}
-                    required
-                  >
-                    <option value="">Select artist...</option>
-                    {entities.map(e => (
-                      <option key={e.id} value={e.id}>{e.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
+          <div>
+            <p className={styles.groupLabel}>Venue and price</p>
+            <div className={styles.group}>
+              <div className={styles.block}>
+                <div className={styles.blockTop}>
+                  <label className="t-callout" htmlFor="pr-cap">Venue capacity</label>
+                  <input id="pr-cap" className={styles.bigInput} inputMode="numeric" value={capacity} onChange={e => setCapacity(e.target.value.replace(/\D/g, ''))} aria-invalid={touched && !!errors.capacity} />
                 </div>
-                {entities.length === 0 && (
-                  <p className="t-caption text-tertiary" style={{ marginTop: 4 }}>
-                    {allEntities.length === 0 ? 'Backend offline — start FastAPI to load artists' : `No ${market} artists match`}
-                  </p>
-                )}
+                <LogRange label="Capacity slider" value={capN} lo={CAP.min} hi={CAP.max} step={100} onChange={v => setCapacity(String(v))} />
+                <div className={styles.presets}>{CAP_PRESETS.map(c => <button key={c} type="button" className="chip" aria-pressed={capN === c} onClick={() => setCapacity(String(c))}>{num(c)}</button>)}</div>
               </div>
-
-              {/* City selector */}
-              <div className={styles.field}>
-                <label className={styles.label}>City</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    className={`input ${styles.select}`}
-                    value={city}
-                    onChange={e => setCity(e.target.value)}
-                    required
-                    disabled={cities.length === 0}
-                  >
-                    <option value="">{cities.length > 0 ? 'Select city...' : 'Cities unavailable'}</option>
-                    {cities.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
+              <div className={styles.block}>
+                <div className={styles.blockTop}>
+                  <label className="t-callout" htmlFor="pr-price">Proposed ticket price</label>
+                  <span style={{ display: 'flex', alignItems: 'baseline' }}><span className={styles.bigInput} style={{ width: 'auto', color: 'var(--text-tertiary)', marginRight: 4 }}>₹</span><input id="pr-price" className={styles.bigInput} style={{ width: 96 }} inputMode="numeric" value={price} onChange={e => setPrice(e.target.value.replace(/\D/g, ''))} aria-invalid={touched && !!errors.price} /></span>
                 </div>
-                {cities.length === 0 && (
-                  <p className="t-caption text-tertiary" style={{ marginTop: 4 }}>Backend offline — start FastAPI to load cities</p>
-                )}
-              </div>
-
-              {/* Capacity */}
-              <div className={styles.field}>
-                <label className={styles.label}>Venue Capacity</label>
-                <input
-                  type="number"
-                  className="input"
-                  placeholder="e.g. 15000"
-                  value={capacity}
-                  onChange={e => setCapacity(e.target.value)}
-                  min={100}
-                  max={200000}
-                  required
-                />
-                <div className={styles.capacityChips}>
-                  {[2000, 8000, 15000, 55000].map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      className={`${styles.filterChip} ${capacity === String(c) ? styles.filterActive : ''}`}
-                      onClick={() => setCapacity(String(c))}
-                    >
-                      {c.toLocaleString()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Proposed price */}
-              <div className={styles.field}>
-                <label className={styles.label}>Your Proposed Price (₹)</label>
-                <input
-                  type="number"
-                  className="input"
-                  placeholder="e.g. 4500"
-                  value={price}
-                  onChange={e => setPrice(e.target.value)}
-                  min={100}
-                  required
-                />
-                <div className={styles.capacityChips}>
-                  {[1500, 3000, 5000, 8000].map(p => (
-                    <button
-                      key={p}
-                      type="button"
-                      className={`${styles.filterChip} ${price === String(p) ? styles.filterActive : ''}`}
-                      onClick={() => setPrice(String(p))}
-                    >
-                      ₹{p.toLocaleString('en-IN')}
-                    </button>
-                  ))}
-                </div>
+                <LogRange label="Price slider" value={priceN} lo={PRICE.min} hi={PRICE.max} step={50} onChange={v => setPrice(String(v))} />
+                <div className={styles.presets}>{PRICE_PRESETS.map(p => <button key={p} type="button" className="chip" aria-pressed={priceN === p} onClick={() => setPrice(String(p))}>{inrCompact(p)}</button>)}</div>
               </div>
             </div>
+            {touched && (errors.capacity || errors.price) && <p className={styles.err} role="alert">{errors.capacity || errors.price}</p>}
+          </div>
 
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={loading || !entityId || !city || !capacity || !price}
-              style={{ alignSelf: 'flex-end', minWidth: 180 }}
-            >
-              {loading ? 'Analyzing signals...' : <><Zap size={14} /> Optimize Price</>}
-            </button>
-          </form>
+          <button type="submit" className={`btn btn-primary ${styles.cta}`} disabled={busy} data-testid="optimize">{busy ? 'Analysing signals…' : <><Sparkles size={16} /> Optimize price</>}</button>
+        </form>
 
-          {error && (
-            <div className={styles.errorBox}>
-              <AlertCircle size={14} color="var(--negative)" />
-              <span className="t-callout" style={{ color: 'var(--negative)' }}>{error}</span>
+        <div className={styles.results} aria-live="polite">
+          <AnimatePresence mode="wait">
+            {failure?.status === 403 ? (
+              <motion.div key="403" className={styles.notice} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="alert" data-testid="role-notice">
+                <Lock size={22} color="var(--text-secondary)" style={{ flexShrink: 0, marginTop: 2 }} />
+                <div><p className="t-headline">Optimizer requires Analyst or Booker access</p><p className="t-callout text-secondary" style={{ marginTop: 4 }}>You’re signed in as {user?.role ?? 'a viewer'}. Ask an admin to upgrade your role to Analyst, Booker or Executive. You can still explore benchmarks and city price levels below.</p></div>
+              </motion.div>
+            ) : failure ? (
+              <motion.div key="err" className={`${styles.notice} ${styles.noticeErr}`} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} role="alert" data-testid="error-notice">
+                <TriangleAlert size={22} color="var(--warning)" style={{ flexShrink: 0, marginTop: 2 }} />
+                <div><p className="t-headline">{failure.status === 422 ? 'Check your inputs' : 'Couldn’t optimize this price'}</p><p className="t-callout text-secondary" style={{ marginTop: 4 }}>{failure.message}</p></div>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          {result && rec && (
+            <motion.div className={styles.bento} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 140, damping: 20 }} data-testid="result">
+              <GlassCard className={styles.hero}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                  <span className={styles.eyebrow}>Recommended price · {result.entity.name}</span>
+                  <span className="badge badge-neutral">{rec.price_tier}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
+                  <span className={styles.price} data-testid="rec-price">{inr(rec.recommended_price)}</span>
+                  {delta != null && <span className={styles.delta} style={{ color: delta > 0 ? 'var(--positive)' : delta < 0 ? 'var(--negative)' : 'var(--text-tertiary)' }}>
+                    {delta >= 0 ? <ArrowUpRight size={17} /> : <ArrowDownRight size={17} />}{inr(Math.abs(delta))}{deltaPct != null && ` (${Math.abs(deltaPct).toFixed(0)}%)`} vs {inr(rec.proposed_price)}</span>}
+                </div>
+                <PriceLadder bench={result.benchmarks} proposed={rec.proposed_price} recommended={rec.recommended_price} />
+              </GlassCard>
+              <GlassCard className={styles.fill}>
+                <span className={styles.eyebrow}>Predicted fill</span>
+                <Ring value={rec.predicted_fill_rate} size={116} stroke={13} color="var(--accent)"><span style={{ fontFamily: ROUNDED, fontSize: '1.75rem', fontWeight: 700 }}>{rec.predicted_fill_rate != null ? `${Math.round(rec.predicted_fill_rate)}%` : '—'}</span></Ring>
+                <p className="t-footnote text-secondary">{rec.predicted_fill_rate != null ? `≈ ${num(Math.round(capN * rec.predicted_fill_rate / 100))} of ${num(capN)} seats` : 'No fill estimate'}</p>
+              </GlassCard>
+              <GlassCard className={styles.half}>
+                <h3 className="t-headline">Why this price</h3>
+                <div className={styles.reason}><Sparkles size={15} color="var(--accent)" style={{ flexShrink: 0, marginTop: 3 }} /><p className="t-callout text-secondary">{rec.reasoning}</p></div>
+                <p className="t-footnote text-tertiary">{rec.confidence} · model {result.model}</p>
+              </GlassCard>
+              <GlassCard className={styles.half}>
+                <h3 className="t-headline">Signals</h3>
+                <div className={styles.signalList}>{signals.map(([k, v]) => <div key={k} className={styles.signal}><span className="t-callout text-secondary">{k}</span><span className="t-callout tnum" style={{ fontWeight: 650 }}>{v}</span></div>)}</div>
+              </GlassCard>
+              <GlassCard className={styles.wide}>
+                <div><h3 className="t-headline">Price elasticity</h3><p className="t-footnote text-tertiary">Expected attendance at each price point</p></div>
+                {rec.sensitivity_curve.length > 0 ? (
+                  <div className={styles.chart}><ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={rec.sensitivity_curve} margin={{ top: 8, right: 10, left: -12, bottom: 0 }}>
+                      <defs><linearGradient id="elg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--accent)" stopOpacity={.3} /><stop offset="100%" stopColor="var(--accent)" stopOpacity={0} /></linearGradient></defs>
+                      <CartesianGrid stroke="var(--divider)" vertical={false} />
+                      <XAxis dataKey="price" type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => inrCompact(v)} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} />
+                      <Tooltip contentStyle={{ background: 'var(--glass-fill-strong)', border: '1px solid var(--glass-border)', borderRadius: 12, fontSize: 12 }} formatter={(v: unknown) => [`${v}%`, 'Attendance']} labelFormatter={(v: unknown) => inr(Number(v))} />
+                      <ReferenceLine x={rec.recommended_price} stroke="var(--accent)" strokeDasharray="4 3" label={{ value: 'Optimal', fill: 'var(--accent)', fontSize: 11, position: 'insideTopRight' }} />
+                      <Area type="monotone" dataKey="attendance_pct" stroke="var(--accent)" strokeWidth={2.5} fill="url(#elg)" dot={false} />
+                    </AreaChart></ResponsiveContainer></div>
+                ) : <p className="t-callout text-tertiary">The ML model fell back to rules for this request, so no elasticity curve is available.</p>}
+              </GlassCard>
+            </motion.div>
+          )}
+
+          {!result && (
+            <div className={styles.bento}>
+              <GlassCard className={styles.wide} delay={0.05}>
+                <div><h3 className="t-headline">{catKey.charAt(0).toUpperCase() + catKey.slice(1)} price ladder</h3><p className="t-footnote text-tertiary">Market benchmarks{cityMult != null ? ` · ${city} runs at ${cityMult}× the national level` : ''}</p></div>
+                {bench ? <PriceLadder bench={bench} proposed={price && !errors.price ? priceN : null} recommended={null} /> : <Skeleton height={80} radius={14} />}
+              </GlassCard>
+              <GlassCard className={styles.wide} delay={0.1}>
+                <div><h3 className="t-headline">Price level by city</h3><p className="t-footnote text-tertiary">{act ? `Where ${act.name} supports the highest ticket, starting from ${inr(priceN)}` : 'Choose an act to see how the same ticket prices across Indian cities.'}</p></div>
+                {!act ? <EmptyState title="Pick an act" message="City price levels are shown for the act you choose." />
+                  : !elasticity.data ? <Skeleton height={140} radius={14} />
+                  : <div className={styles.bars} data-testid="city-bars">{curve.map(c => (
+                    <div key={c.city} className={styles.barRow}><span className="t-callout">{c.city}</span>
+                      <div className={styles.barTrack}><motion.div className={styles.barFill} style={{ background: c.city === city ? 'var(--accent)' : 'var(--text-tertiary)' }} initial={{ width: 0 }} animate={{ width: `${(c.optimal_price / maxCurve) * 100}%` }} transition={{ duration: .6 }} /></div>
+                      <span className="t-callout tnum" style={{ fontWeight: 650, textAlign: 'right' }}>{inrCompact(c.optimal_price)}</span></div>))}</div>}
+              </GlassCard>
             </div>
           )}
-        </GlassCard>
-
-        {/* Result */}
-        <AnimatePresence mode="wait">
-          {result && <RecommendationCard key="rec" data={result} />}
-        </AnimatePresence>
-
-        {!result && !loading && (
-          <motion.div
-            className={styles.placeholder}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-          >
-            <IndianRupee size={36} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-tertiary" style={{ marginTop: 14 }}>Configure an event above</p>
-            <p className="t-callout text-tertiary" style={{ maxWidth: 320, textAlign: 'center', lineHeight: 1.6, marginTop: 6 }}>
-              The optimizer uses Google Trend scores, city demand multipliers, venue capacity factors, and season signals to recommend the optimal ticket price.
-            </p>
-          </motion.div>
-        )}
+        </div>
       </div>
-    </div>
+      <ActPicker open={pickOpen} onClose={() => setPickOpen(false)} onPick={setAct} />
+    </Page>
   );
 }

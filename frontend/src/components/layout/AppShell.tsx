@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
+import { TabBar } from './TabBar';
+import { PaletteProvider } from './CommandPalette';
 import { ShellContext } from './shell-context';
 
 const CHROMELESS_ROUTES = ['/login', '/register'];
@@ -28,10 +30,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <ShellContext.Provider value={{ openMenu: () => setMobileOpen(true) }}>
+     <PaletteProvider>
       <Sidebar collapsed={collapsed} onCollapsedChange={setCollapsedPersist} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
-      <main id="main-content" style={{ marginLeft: collapsed ? 'var(--sidebar-collapsed)' : 'var(--sidebar-width)' }}>
+      <main id="main-content" style={{ marginLeft: `calc(${collapsed ? 'var(--sidebar-collapsed)' : 'var(--sidebar-width)'} + 24px)` }}>
         {children}
       </main>
+      <TabBar onMore={() => setMobileOpen(true)} />
+     </PaletteProvider>
     </ShellContext.Provider>
   );
 }

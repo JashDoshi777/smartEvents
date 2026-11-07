@@ -1,180 +1,200 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { motion } from 'framer-motion';
-import { CalendarDays, ChevronDown, AlertCircle, Info } from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { AnimatePresence, motion } from 'framer-motion';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin } from 'lucide-react';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { getCities, getCityVenues, getVenueCalendar, VenueCalendarResponse } from '@/lib/api';
+import { Sheet } from '@/components/ui/Sheet';
+import { EmptyState, ErrorState } from '@/components/ui/States';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { dateIN, num } from '@/lib/format';
+import { Ring, ROUNDED } from '@/components/insights/Ring';
+import { VenueCalendarEvent, getCityVenuesStrict, getMarketCities, getVenueCalendarStrict } from '@/lib/api';
 import styles from './page.module.css';
 
+const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const IST = 'Asia/Kolkata';
+const pad = (n: number) => String(n).padStart(2, '0');
+const keyOf = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
+const istKey = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: IST });
+const MONTH_FMT = new Intl.DateTimeFormat('en-IN', { month: 'long' });
+
+function todayKey() { return new Date().toLocaleDateString('en-CA', { timeZone: IST }); }
+
 export default function VenueCalendarPage() {
-  const [city, setCity] = useState('');
+  const [city, setCity] = useState('Mumbai');
   const [venueId, setVenueId] = useState('');
-  const [months, setMonths] = useState('3');
-  const [result, setResult] = useState<VenueCalendarResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const today = todayKey();
+  const [ty, tm] = today.split('-').map(Number);
+  const [view, setView] = useState({ y: ty, m: tm - 1 });
+  const [selected, setSelected] = useState<string | null>(null);
 
-  const { data: citiesData } = useSWR('cities/venue-calendar', () => getCities(), { shouldRetryOnError: false });
-  const { data: venuesData } = useSWR(
-    city ? `venues/${city}` : null,
-    () => getCityVenues(city),
-    { shouldRetryOnError: false }
-  );
+  const { data: citiesData } = useSWR('market-cities', getMarketCities);
+  const venuesRes = useSWR(['cal-venues', city], () => getCityVenuesStrict(city));
+  const venues = useMemo(() => (venuesRes.data?.venues ?? []).filter((v): v is typeof v & { id: string } => !!v.id), [venuesRes.data]);
 
-  const cities = citiesData?.cities ?? [];
-  const venues = (venuesData?.venues ?? []).filter(
-    (v): v is typeof v & { id: string } => v.id !== null
-  );
+  // Auto-pick the first venue when the city (or its venue list) changes.
+  useEffect(() => {
+    if (venues.length === 0) { setVenueId(''); return; }
+    if (!venues.some(v => v.id === venueId)) setVenueId(venues[0].id);
+  }, [venues, venueId]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!venueId) {
-      setError('Select a venue to view its calendar.');
-      return;
+  const cal = useSWR(venueId ? ['venue-cal', venueId] : null, () => getVenueCalendarStrict(venueId, 12));
+
+  const eventsByDay = useMemo(() => {
+    const map = new Map<string, VenueCalendarEvent[]>();
+    for (const w of cal.data?.weeks ?? []) for (const e of w.events_this_week) {
+      const k = istKey(e.event_date);
+      map.set(k, [...(map.get(k) ?? []), e]);
     }
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getVenueCalendar(venueId, Number(months) || 3);
-      setResult(res);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load calendar. Ensure the backend is running.');
-    } finally {
-      setLoading(false);
+    return map;
+  }, [cal.data]);
+  const bookedWeekendDays = useMemo(() => {
+    const s = new Set<string>();
+    for (const w of cal.data?.weeks ?? []) if (w.is_weekend_booked) {
+      const start = new Date(`${w.week_start}T00:00:00Z`);
+      for (const off of [4, 5, 6]) s.add(new Date(start.getTime() + off * 86400000).toISOString().slice(0, 10));
     }
-  }
+    return s;
+  }, [cal.data]);
+  const upcoming = useMemo(() => [...eventsByDay.entries()].sort(([a], [b]) => a.localeCompare(b)).filter(([k]) => k >= today).flatMap(([, v]) => v), [eventsByDay, today]);
+
+  const cells = useMemo(() => {
+    const first = new Date(Date.UTC(view.y, view.m, 1));
+    const lead = (first.getUTCDay() + 6) % 7;
+    const dim = new Date(Date.UTC(view.y, view.m + 1, 0)).getUTCDate();
+    const total = Math.ceil((lead + dim) / 7) * 7;
+    return Array.from({ length: total }, (_, i) => {
+      const d = new Date(Date.UTC(view.y, view.m, 1 - lead + i));
+      return { key: keyOf(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()), day: d.getUTCDate(), inMonth: d.getUTCMonth() === view.m, col: i % 7 };
+    });
+  }, [view]);
+
+  const range = cal.data?.range;
+  const step = (n: number) => setView(v => { const d = new Date(Date.UTC(v.y, v.m + n, 1)); return { y: d.getUTCFullYear(), m: d.getUTCMonth() }; });
+  const goToday = () => { setView({ y: ty, m: tm - 1 }); setSelected(today); };
+  const selEvents = selected ? eventsByDay.get(selected) ?? [] : [];
+  const cityOptions = (citiesData?.cities ?? []).map(c => c.name);
+  const venue = cal.data?.venue;
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Venue Availability Calendar" subtitle="Weekend-by-weekend booked/open view, built from real tracked events" />
-
-      <div className={styles.page}>
-        <GlassCard className={styles.formCard} delay={0.04}>
-          <div className={styles.formHeader}>
-            <CalendarDays size={18} color="var(--accent)" />
-            <div>
-              <h2 className="t-headline text-primary">Select a Venue</h2>
-              <p className="t-footnote text-tertiary">Choose a city, then a venue, to see its real booked/open weekends</p>
-            </div>
+    <Page title="Venue Calendar" subtitle="Weekend availability by venue across Indian cities">
+      <div className={styles.pickers}>
+        <div className={styles.field}>
+          <label className={styles.label} htmlFor="cal-city">City</label>
+          <div className={styles.selectWrap}>
+            <select id="cal-city" className={`input ${styles.select}`} value={city} onChange={e => { setCity(e.target.value); setVenueId(''); setSelected(null); }}>
+              {(cityOptions.length ? cityOptions : [city]).map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <ChevronDown size={14} className={styles.selectIcon} />
           </div>
-
-          <form onSubmit={handleSubmit} className={styles.form}>
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="cal-city">City</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    id="cal-city" className={`input ${styles.select}`} value={city}
-                    onChange={e => { setCity(e.target.value); setVenueId(''); setResult(null); }}
-                    required disabled={cities.length === 0}
-                  >
-                    <option value="">{cities.length > 0 ? 'Select city...' : 'Cities unavailable'}</option>
-                    {cities.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="cal-venue">Venue</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    id="cal-venue" className={`input ${styles.select}`} value={venueId}
-                    onChange={e => setVenueId(e.target.value)}
-                    required disabled={!city || venues.length === 0}
-                  >
-                    <option value="">{!city ? 'Select a city first' : venues.length === 0 ? 'No venues on file' : 'Select venue...'}</option>
-                    {venues.map(v => (
-                      <option key={v.id} value={v.id}>{v.name} ({v.capacity?.toLocaleString('en-IN') ?? '—'} cap)</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="cal-months">Months Ahead</label>
-                <div className={styles.selectWrap}>
-                  <select id="cal-months" className={`input ${styles.select}`} value={months} onChange={e => setMonths(e.target.value)}>
-                    {[1, 2, 3, 6, 12].map(m => <option key={m} value={m}>{m} month{m > 1 ? 's' : ''}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-            </div>
-
-            {error && (
-              <div className={styles.errorBox}>
-                <AlertCircle size={16} color="var(--negative)" />
-                <span className="t-callout" style={{ color: 'var(--negative)' }}>{error}</span>
-              </div>
-            )}
-
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ alignSelf: 'flex-start' }}>
-              {loading ? 'Loading calendar...' : 'View Calendar'}
-            </button>
-          </form>
-        </GlassCard>
-
-        {result && (
-          <motion.div className={styles.resultWrap} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <GlassCard style={{ padding: 22 }} delay={0}>
-              <h2 className="t-title2 text-primary" style={{ fontWeight: 800, marginBottom: 4 }}>{result.venue.name}</h2>
-              <p className="t-footnote text-tertiary" style={{ marginBottom: 16 }}>
-                {result.venue.city} · {result.venue.capacity?.toLocaleString('en-IN') ?? '—'} capacity · {result.range.start} to {result.range.end}
-              </p>
-              <div className={styles.summaryRow}>
-                <div className={styles.summaryChip}>
-                  <span className="t-title2 text-primary" style={{ fontWeight: 800 }}>{result.summary.booked_weekends}</span>
-                  <span className="t-caption text-tertiary">Booked weekends</span>
-                </div>
-                <div className={styles.summaryChip}>
-                  <span className="t-title2" style={{ fontWeight: 800, color: 'var(--positive)' }}>{result.summary.open_weekends}</span>
-                  <span className="t-caption text-tertiary">Open weekends</span>
-                </div>
-                <div className={styles.summaryChip}>
-                  <span className="t-title2 text-primary" style={{ fontWeight: 800 }}>{result.summary.total_tracked_events}</span>
-                  <span className="t-caption text-tertiary">Tracked weekend events</span>
-                </div>
-              </div>
-            </GlassCard>
-
-            <GlassCard style={{ padding: 22 }} delay={0.05}>
-              <h3 className="t-headline text-primary" style={{ marginBottom: 14 }}>Week-by-Week</h3>
-              <div className={styles.weekGrid}>
-                {result.weeks.map(w => (
-                  <div key={w.week_start} className={`${styles.weekCell} ${w.is_weekend_booked ? styles.weekCellBooked : styles.weekCellOpen}`}>
-                    <span className={styles.weekLabel}>{new Date(w.week_start).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}</span>
-                    <span className={styles.weekStatus} style={{ color: w.is_weekend_booked ? 'var(--negative)' : 'var(--positive)' }}>
-                      {w.is_weekend_booked ? 'Booked' : 'Open'}
-                    </span>
-                    {w.weekend_events.slice(0, 1).map(ev => (
-                      <span key={ev.id} className={styles.weekEventTitle} title={ev.title}>{ev.title}</span>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </GlassCard>
-
-            <GlassCard style={{ padding: 18 }} delay={0.1}>
-              <div className={styles.noteBox}>
-                <Info size={15} color="var(--text-tertiary)" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p className="t-caption text-tertiary" style={{ lineHeight: 1.6 }}>{result.data_note}</p>
-              </div>
-            </GlassCard>
-          </motion.div>
-        )}
-
-        {!result && !loading && (
-          <GlassCard className={styles.placeholder} delay={0.1}>
-            <CalendarDays size={32} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-tertiary" style={{ marginTop: 16 }}>Select a venue above to see its availability calendar</p>
-          </GlassCard>
-        )}
+        </div>
+        <div className={styles.field}>
+          <label className={styles.label} htmlFor="cal-venue">Venue</label>
+          <div className={styles.selectWrap}>
+            <select id="cal-venue" className={`input ${styles.select}`} value={venueId} disabled={venues.length === 0} onChange={e => { setVenueId(e.target.value); setSelected(null); }}>
+              {venues.length === 0 && <option value="">{venuesRes.isLoading ? 'Loading venues…' : 'No venues on file'}</option>}
+              {venues.map(v => <option key={v.id} value={v.id}>{v.name} · {num(v.capacity)} cap</option>)}
+            </select>
+            <ChevronDown size={14} className={styles.selectIcon} />
+          </div>
+        </div>
       </div>
-    </div>
+
+      {venuesRes.error && !venuesRes.data ? (
+        <GlassCard><ErrorState message="Couldn’t load venues for this city." onRetry={() => venuesRes.mutate()} /></GlassCard>
+      ) : venuesRes.data && venues.length === 0 ? (
+        <GlassCard><EmptyState icon={<MapPin size={34} strokeWidth={1.4} />} title={`No venues tracked in ${city}`} message="Pick another city — venues come from the venue database." /></GlassCard>
+      ) : (
+        <div className={styles.main}>
+          <GlassCard className={styles.calCard}>
+            <div className={styles.calHead}>
+              <h2 className={styles.monthTitle} data-testid="month-title">{MONTH_FMT.format(new Date(Date.UTC(view.y, view.m, 1)))} <span>{view.y}</span></h2>
+              <button className="btn btn-ghost btn-sm" onClick={goToday}>Today</button>
+              <button className="btn btn-icon" aria-label="Previous month" onClick={() => step(-1)}><ChevronLeft size={16} /></button>
+              <button className="btn btn-icon" aria-label="Next month" onClick={() => step(1)}><ChevronRight size={16} /></button>
+            </div>
+            <div className={styles.dow}>{DOW.map((d, i) => <span key={d} className={i >= 4 ? styles.dowWknd : ''}>{d}</span>)}</div>
+            {cal.isLoading && !cal.data ? (
+              <div className={styles.grid}>{Array.from({ length: 35 }).map((_, i) => <Skeleton key={i} height={52} radius={14} />)}</div>
+            ) : cal.error && !cal.data ? (
+              <ErrorState message="Couldn’t load this venue’s calendar." onRetry={() => cal.mutate()} />
+            ) : (
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div key={`${view.y}-${view.m}`} className={styles.grid} role="grid" aria-label="Month" initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }} transition={{ duration: .2 }}>
+                  {cells.map(c => {
+                    const evs = eventsByDay.get(c.key) ?? [];
+                    const isToday = c.key === today;
+                    const cls = [styles.day, !c.inMonth && styles.dayOut, c.key < today && styles.dayPast, c.col >= 4 && !bookedWeekendDays.has(c.key) && styles.dayWknd, bookedWeekendDays.has(c.key) && styles.dayBooked, isToday && styles.dayToday, selected === c.key && styles.daySel].filter(Boolean).join(' ');
+                    return (
+                      <button key={c.key} type="button" role="gridcell" className={cls} onClick={() => setSelected(c.key)}
+                        aria-label={`${dateIN(c.key, { weekday: 'long', day: 'numeric', month: 'long' })}${evs.length ? `, ${evs.length} event${evs.length > 1 ? 's' : ''}` : ''}`}>
+                        <span className={styles.dayNum}>{c.day}</span>
+                        <span className={styles.dots}>{evs.slice(0, 3).map(e => <i key={e.id} className={styles.dot} />)}{evs.length > 3 && <span className={styles.dotMore}>+</span>}</span>
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              </AnimatePresence>
+            )}
+            <div className={styles.legend}>
+              <span className={styles.legendItem}><i className={styles.swatch} style={{ background: 'var(--fill-tertiary)' }} /> Weekend (Fri–Sun), no tracked event</span>
+              <span className={styles.legendItem}><i className={styles.swatch} style={{ background: 'var(--accent-dim)' }} /> Booked weekend</span>
+              <span className={styles.legendItem}><i className={styles.dot} /> Event</span>
+            </div>
+            {range && <p className={styles.note}>Data covers {dateIN(range.start)} to {dateIN(range.end)}. Dates outside this window have no tracked data.</p>}
+          </GlassCard>
+
+          <div className={styles.side}>
+            <div className={styles.tiles}>
+              <GlassCard className={`${styles.tile} ${styles.tileBig}`}>
+                <Ring value={cal.data ? (cal.data.summary.open_weekends / Math.max(1, cal.data.summary.total_weeks)) * 100 : 0} size={88} stroke={10} color="var(--accent)">
+                  <span style={{ fontFamily: ROUNDED, fontSize: '1.25rem', fontWeight: 700 }}>{cal.data ? Math.round((cal.data.summary.open_weekends / Math.max(1, cal.data.summary.total_weeks)) * 100) : '—'}%</span>
+                </Ring>
+                <div><p className="t-headline">Weekends open</p><p className="t-footnote text-tertiary">{cal.data ? `${cal.data.summary.open_weekends} of ${cal.data.summary.total_weeks} weekends have no tracked event` : 'Loading…'}</p></div>
+              </GlassCard>
+              {[{ l: 'Booked weekends', v: cal.data?.summary.booked_weekends, c: 'var(--text-primary)' }, { l: 'Open weekends', v: cal.data?.summary.open_weekends, c: 'var(--text-primary)' }, { l: 'Tracked events', v: cal.data?.summary.total_tracked_events }].map((t, i) => (
+                <GlassCard key={t.l} className={styles.tile} delay={i * 0.04}>
+                  <span className="t-caption text-tertiary">{t.l}</span>
+                  <span className={`${styles.tileVal} tnum`} style={{ color: t.c }}>{t.v != null ? t.v : '—'}</span>
+                </GlassCard>
+              ))}
+            </div>
+            <GlassCard className={styles.card} delay={0.08}>
+              <div>
+                <h3 className="t-headline">{venue?.name ?? 'Select a venue'}</h3>
+                <p className="t-footnote text-tertiary">{venue ? `${venue.city} · ${num(venue.capacity)} capacity` : '—'}</p>
+              </div>
+              <h4 className="t-callout" style={{ fontWeight: 650 }}>Upcoming events</h4>
+              {!cal.data ? <Skeleton height={56} radius={14} /> : upcoming.length === 0 ? (
+                <EmptyState icon={<CalendarDays size={30} strokeWidth={1.4} />} title="No tracked events" message="Every weekend shows as open — this reflects data coverage, not a confirmed availability check." />
+              ) : <div>{upcoming.slice(0, 8).map(e => (
+                <button key={e.id} className={styles.evRow} style={{ width: '100%', textAlign: 'left', background: 'none', border: 0, color: 'inherit', font: 'inherit', cursor: 'pointer' }} onClick={() => { const k = istKey(e.event_date); const [y, m] = k.split('-').map(Number); setView({ y, m: m - 1 }); setSelected(k); }}>
+                  <div className={styles.evDate}><div className={styles.evDay}>{new Date(e.event_date).toLocaleDateString('en-IN', { day: 'numeric', timeZone: IST })}</div><div className={styles.evMon}>{new Date(e.event_date).toLocaleDateString('en-IN', { month: 'short', timeZone: IST })}</div></div>
+                  <div style={{ minWidth: 0 }}><p className="t-callout" style={{ fontWeight: 600 }}>{e.title}</p><p className="t-caption text-tertiary">{[e.status, e.source].filter(Boolean).join(' · ') || '—'}</p></div>
+                </button>))}</div>}
+            </GlassCard>
+            {cal.data?.data_note && (
+              <div style={{ display: 'flex', gap: 10, padding: '0 6px' }}><Info size={14} color="var(--text-tertiary)" style={{ flexShrink: 0, marginTop: 2 }} /><p className={styles.note}>{cal.data.data_note}</p></div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <Sheet open={!!selected} onClose={() => setSelected(null)} title={selected ? dateIN(selected, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : ''}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }} data-testid="day-sheet">
+          {selEvents.length === 0 ? (
+            <EmptyState icon={<CalendarDays size={30} strokeWidth={1.4} />} title="No tracked events" message={selected && range && (selected < range.start || selected > range.end) ? 'This date is outside the tracked window.' : `${venue?.name ?? 'This venue'} has no tracked event on this day.`} />
+          ) : selEvents.map(e => (
+            <div key={e.id} className={styles.sheetEv}>
+              <p className="t-callout" style={{ fontWeight: 650 }}>{e.title}</p>
+              <p className="t-caption text-tertiary">{new Date(e.event_date).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: IST })} · {[e.status, e.source].filter(Boolean).join(' · ') || '—'}</p>
+            </div>
+          ))}
+        </div>
+      </Sheet>
+    </Page>
   );
 }

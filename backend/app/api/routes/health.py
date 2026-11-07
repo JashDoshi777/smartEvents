@@ -22,14 +22,16 @@ async def health():
     db, mongo, redis = await asyncio.gather(
         check_db_connection(), check_mongo_connection(), check_redis_connection()
     )
-    all_healthy = db and mongo and redis
+    # Postgres is the only hard dependency; Mongo/Redis are optional extras
+    # (background workers) and must not flip the whole API to 'degraded'.
+    all_healthy = db
     result = {
         "status": "ok" if all_healthy else "degraded",
         "version": settings.APP_VERSION,
         "services": {
             "postgres": "up" if db else "down",
-            "mongodb": "up" if mongo else "down",
-            "redis": "up" if redis else "down",
+            "mongodb": "up" if mongo else "optional-offline",
+            "redis": "up" if redis else "optional-offline",
         },
         "apis_configured": {
             "spotify": settings.is_api_configured("spotify"),

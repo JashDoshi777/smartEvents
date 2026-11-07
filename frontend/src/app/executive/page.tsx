@@ -1,23 +1,37 @@
 'use client';
+
 import { useState } from 'react';
-import { Topbar } from '@/components/layout/Topbar';
-import { GlassCard } from '@/components/ui/GlassCard';
-import { MetricTile } from '@/components/ui/MetricTile';
 import useSWR from 'swr';
+import { motion } from 'framer-motion';
+import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Page } from '@/components/ui/Page';
+import { GlassCard } from '@/components/ui/GlassCard';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { EmptyState, ErrorState } from '@/components/ui/States';
+import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { useMarketScope } from '@/components/providers/MarketScopeProvider';
+import { Ring, StackBar } from '@/components/dashboard/Ring';
 import { getKPIs, getBriefing, getPortfolio, downloadExecutiveReportPdf } from '@/lib/api';
-import { Brain, Zap, TrendingUp, Globe, Download, Loader2 } from 'lucide-react';
+import { num, timeAgo } from '@/lib/format';
 import styles from './page.module.css';
 
-export default function ExecutivePage() {
-  const { data: kpis } = useSWR('kpis', getKPIs, { refreshInterval: 60000 });
-  const { data: briefing, isLoading } = useSWR('briefing', getBriefing, { revalidateOnFocus: false });
-  const { data: portfolio } = useSWR('portfolio', getPortfolio);
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
+const healthBadge = (h: string) => h === 'Strong' ? 'badge badge-blue' : 'badge badge-neutral';
+const scoreColor = (_v?: number | null) => 'var(--accent)';
 
-  async function handleExportPdf() {
+export default function ExecutivePage() {
+  const { isIndia } = useMarketScope();
+  const { user } = useAuth();
+  const toast = useToast();
+  const kpis = useSWR('kpis', getKPIs, { refreshInterval: 60000 });
+  const briefing = useSWR('briefing', getBriefing, { revalidateOnFocus: false });
+  const portfolio = useSWR('portfolio', () => getPortfolio());
+  const [exporting, setExporting] = useState(false);
+  // The backend only lets executives and analysts export reports.
+  const canExport = user?.role === 'executive' || user?.role === 'analyst';
+
+  async function exportPdf() {
     setExporting(true);
-    setExportError(null);
     let url: string | null = null;
     try {
       const blob = await downloadExecutiveReportPdf();
@@ -28,87 +42,105 @@ export default function ExecutivePage() {
       document.body.appendChild(a);
       a.click();
       a.remove();
+      toast('Report downloaded', 'success');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to generate report. Ensure the backend is running.';
-      setExportError(message);
+      const m = err instanceof Error ? err.message : '';
+      toast(m.includes('403') ? 'Your role can’t export reports' : m || 'Couldn’t generate the report', 'error');
     } finally {
-      if (url) URL.revokeObjectURL(url);
+      if (url) { const u = url; setTimeout(() => URL.revokeObjectURL(u), 4000); }
       setExporting(false);
     }
   }
 
+  const k = kpis.data;
+  const p = portfolio.data;
+  const rows = (p?.portfolio ?? []).filter(e => isIndia ? !e.is_international : true).slice(0, 10);
+  const top = Math.max(1, ...rows.map(r => r.composite_score ?? 0));
+  const hs = p?.health_summary;
+  const score = k?.entity_portfolio.avg_composite_score;
+
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Executive Suite" subtitle="Real-time portfolio intelligence" />
-      <div style={{ padding: '84px 28px 40px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-        {/* KPIs + export */}
-        <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, flex: 1 }}>
-            <MetricTile label="Total Entities" value={kpis?.entity_portfolio.total_tracked ?? '—'} icon={<Brain size={16} />} delay={0} />
-            <MetricTile label="Avg Score" value={kpis?.entity_portfolio.avg_composite_score ? `${kpis.entity_portfolio.avg_composite_score}/100` : '—'} accent icon={<TrendingUp size={16} />} delay={0.05} />
-            <MetricTile label="International" value={kpis?.entity_portfolio.international ?? '—'} icon={<Globe size={16} />} delay={0.1} />
-            <MetricTile label="Active Markets" value={kpis?.city_coverage.active_on_district ?? '—'} trend="up" trendValue={`${kpis?.city_coverage.expansion_opportunities ?? 0} targets`} delay={0.15} />
-          </div>
-          <button
-            className="btn btn-secondary"
-            onClick={handleExportPdf}
-            disabled={exporting}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap', alignSelf: 'center' }}
-            title="Download this dashboard as a PDF report"
-          >
-            {exporting ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
-            {exporting ? 'Generating...' : 'Export PDF'}
-          </button>
-        </div>
-        {exportError && (
-          <p className="t-caption" style={{ color: 'var(--negative)' }}>{exportError}</p>
-        )}
-
-        {/* AI Briefing */}
-        <GlassCard style={{ padding: 28 }} delay={0.2}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <div style={{ width: 32, height: 32, borderRadius: 10, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)' }}>
-              <Zap size={16} />
-            </div>
-            <div>
-              <h2 className="t-headline text-primary">AI Executive Briefing</h2>
-              <p className="t-footnote text-tertiary">Generated by Groq Llama 3.3 70B · {briefing ? new Date(briefing.generated_at).toLocaleString() : 'Loading...'}</p>
-            </div>
-          </div>
-          {isLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[100, 90, 85, 70].map((w, i) => <div key={i} className="skeleton" style={{ height: 14, width: `${w}%` }} />)}
-            </div>
-          ) : (
-            <p className="t-body text-secondary" style={{ lineHeight: 1.7 }}>
-              {briefing?.briefing ?? 'No briefing available yet.'}
-            </p>
-          )}
-        </GlassCard>
-
-        {/* Portfolio */}
-        <GlassCard style={{ padding: 28 }} delay={0.25}>
-          <h2 className="t-headline text-primary" style={{ marginBottom: 20 }}>Entity Portfolio — Top Ranked</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {portfolio?.portfolio.slice(0, 10).map((e, i) => (
-              <div key={e.id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '10px 12px', borderRadius: 10, borderBottom: '1px solid var(--divider)' }}>
-                <span className="t-caption text-tertiary" style={{ width: 28, textAlign: 'right' }}>#{e.rank}</span>
-                <div style={{ flex: 1 }}>
-                  <p className="t-callout text-primary" style={{ fontWeight: 600 }}>{e.name}</p>
-                  <p className="t-footnote text-tertiary">{e.category ?? e.type} · {e.country}</p>
-                </div>
-                <span className="badge" style={{ background: e.health === 'Strong' ? 'var(--positive-dim)' : e.health === 'Good' ? 'var(--accent-dim)' : 'var(--glass-fill)', color: e.health === 'Strong' ? 'var(--positive)' : e.health === 'Good' ? 'var(--accent)' : 'var(--text-tertiary)' }}>
-                  {e.health}
-                </span>
-                <span className="t-headline" style={{ color: (e.composite_score ?? 0) >= 40 ? 'var(--positive)' : 'var(--accent)', minWidth: 48, textAlign: 'right' }}>
-                  {e.composite_score ?? 'N/A'}
-                </span>
+    <Page
+      title="Executive suite"
+      subtitle="Portfolio intelligence for leadership"
+      actions={canExport ? (
+        <button className="btn btn-primary" onClick={exportPdf} disabled={exporting} aria-label="Export PDF report">
+          {exporting ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+          {exporting ? 'Generating…' : 'Export PDF'}
+        </button>
+      ) : undefined}
+    >
+      {kpis.error && !k ? <GlassCard><ErrorState message="Couldn’t load portfolio KPIs." onRetry={() => kpis.mutate()} /></GlassCard> : (
+        <div className={styles.bento}>
+          <GlassCard className={`${styles.tile} ${styles.gauge}`}>
+            <div className={styles.eyebrow}>Portfolio health</div>
+            {!k ? <Skeleton height={190} radius={22} /> : (<>
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 0' }}>
+                <Ring value={score} size={170} stroke={16} color={scoreColor(score)}>
+                  <div><div className={styles.rounded} style={{ fontSize: '3rem', fontWeight: 700, lineHeight: 1 }}>{score ?? '—'}</div><div className="t-caption text-tertiary">avg demand / 100</div></div>
+                </Ring>
               </div>
-            ))}
+              {hs && <div className={styles.legend}>
+                <StackBar parts={[{ label: 'Strong', value: hs.strong, color: 'var(--accent)' }, { label: 'Good', value: hs.good, color: 'var(--text-secondary)' }, { label: 'Needs data', value: hs.needs_data, color: 'var(--fill-tertiary)' }, { label: 'Weak', value: hs.weak, color: 'var(--text-tertiary)' }]} />
+                <div style={{ display: 'flex', gap: '4px 14px', flexWrap: 'wrap' }}>
+                  {[['Strong', hs.strong, 'var(--accent)'], ['Good', hs.good, 'var(--text-secondary)'], ['Needs data', hs.needs_data, 'var(--fill-tertiary)'], ['Weak', hs.weak, 'var(--text-tertiary)']].map(([l, v, c]) => (
+                    <span key={l as string} className={styles.legendRow}><span className={styles.dot} style={{ background: c as string }} /><span className="t-caption text-secondary">{l} {v}</span></span>
+                  ))}
+                </div>
+              </div>}
+            </>)}
+          </GlassCard>
+
+          <GlassCard className={`${styles.tile} ${styles.brief}`} delay={0.05}>
+            <div className={styles.head}>
+              <div>
+                <div className={styles.eyebrow}>Copilot</div>
+                <h2 className="t-title3" style={{ fontWeight: 700 }}>Executive briefing</h2>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span className="t-caption text-tertiary">{briefing.data ? `Generated ${timeAgo(briefing.data.generated_at)}` : ''}</span>
+                <button className="btn btn-ghost btn-icon" onClick={() => briefing.mutate()} disabled={briefing.isValidating} aria-label="Refresh briefing"><RefreshCw size={14} className={briefing.isValidating ? 'spin' : ''} /></button>
+              </div>
+            </div>
+            {briefing.isLoading && !briefing.data ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>{[100, 92, 86, 70, 90].map((w, i) => <Skeleton key={i} height={14} width={`${w}%`} />)}</div>
+            ) : briefing.error && !briefing.data ? <ErrorState message="Briefing is unavailable right now." onRetry={() => briefing.mutate()} />
+              : <p className={`t-body text-secondary ${styles.briefing}`}>{briefing.data?.briefing || 'No briefing available yet.'}</p>}
+          </GlassCard>
+
+          <div className={styles.statsRow}>
+            {!k ? [0, 1, 2].map(i => <Skeleton key={i} height={96} radius={22} />) : <>
+              <GlassCard className={styles.stat} delay={0.08}><span className={styles.eyebrow}>{isIndia ? 'Indian acts' : 'Acts tracked'}</span><span className={`${styles.rounded} ${styles.statVal}`}>{num(isIndia ? k.entity_portfolio.indian : k.entity_portfolio.total_tracked)}</span><span className="t-footnote text-tertiary">{num(k.entity_portfolio.with_live_metrics)} with live metrics ({Math.round(k.entity_portfolio.metrics_coverage_pct)}%)</span></GlassCard>
+              <GlassCard className={styles.stat} delay={0.1}><span className={styles.eyebrow}>International</span><span className={`${styles.rounded} ${styles.statVal}`}>{num(k.entity_portfolio.international)}</span><span className="t-footnote text-tertiary">Global acts available to book</span></GlassCard>
+              <GlassCard className={styles.stat} delay={0.12}><span className={styles.eyebrow}>Cities live</span><span className={`${styles.rounded} ${styles.statVal}`}>{num(k.city_coverage.active_on_district)}</span><span className="t-footnote text-tertiary">{num(k.city_coverage.expansion_opportunities)} expansion targets</span></GlassCard>
+            </>}
           </div>
-        </GlassCard>
-      </div>
-    </div>
+
+          <GlassCard className={`${styles.tile} ${styles.rank}`} delay={0.14}>
+            <div>
+              <div className={styles.eyebrow}>Leaderboard</div>
+              <h2 className="t-title3" style={{ fontWeight: 700 }}>Top ranked acts{isIndia ? ' · India' : ''}</h2>
+            </div>
+            {portfolio.isLoading && !p ? <SkeletonRows rows={6} /> : portfolio.error && !p ? <ErrorState onRetry={() => portfolio.mutate()} />
+              : rows.length === 0 ? <EmptyState title="No ranked acts yet" message="Rankings appear once demand scores are computed." /> : (
+              <div>
+                {rows.map((e, i) => (
+                  <div key={`${e.id}-${i}`} className={styles.row}>
+                    <span className={styles.num}>{i + 1}</span>
+                    <div className={styles.info}>
+                      <span className={`t-callout ${styles.ellip}`} style={{ fontWeight: 600 }}>{e.name}</span>
+                      <span className={`t-footnote text-tertiary ${styles.ellip}`}>{[e.category ?? e.type, e.country].filter(Boolean).join(' · ')}</span>
+                    </div>
+                    <div className={styles.bar}><motion.div className={styles.fill} style={{ background: scoreColor(e.composite_score) }} initial={{ width: 0 }} animate={{ width: `${((e.composite_score ?? 0) / top) * 100}%` }} transition={{ duration: 0.8, delay: 0.1 + i * 0.04, ease: [0.22, 1, 0.36, 1] }} /></div>
+                    <span className={`${styles.rounded} t-headline`} style={{ textAlign: 'right' }}>{e.composite_score ?? '—'}</span>
+                    <span className={healthBadge(e.health)}>{e.health}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </GlassCard>
+        </div>
+      )}
+    </Page>
   );
 }

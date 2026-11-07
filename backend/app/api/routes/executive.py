@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.models.city import City
+from app.services.latest_metric import latest_metric
 from app.api.deps import get_current_user, require_roles
 from app.models.user import User, UserRole
 
@@ -45,9 +46,10 @@ async def get_kpis(db: AsyncSession = Depends(get_db), user: User = Depends(get_
     )
 
     # Average composite score (latest metric per entity)
+    _latest = latest_metric()
     avg_score_result = await db.execute(
-        select(func.avg(EntityMetric.composite_score)).where(
-            EntityMetric.composite_score.isnot(None)
+        select(func.avg(_latest.composite_score)).where(
+            _latest.composite_score.isnot(None)
         )
     )
     avg_composite_score = avg_score_result.scalar()

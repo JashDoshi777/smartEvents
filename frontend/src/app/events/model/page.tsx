@@ -1,388 +1,193 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { motion } from 'framer-motion';
-import {
-  Calculator, ChevronDown, AlertCircle, CheckCircle,
-  TrendingUp, TrendingDown, Info, Ticket,
-} from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Lock, TrendingUp, Loader2 } from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { getPortfolio, getCities, getCityVenues, modelEventDeal, DealModelResponse, DealScenario } from '@/lib/api';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { EmptyState } from '@/components/ui/States';
+import { EntityPicker, CityPicker, FormGroup, FormRow, FormHint } from '@/components/intel/Pickers';
+import { Ring } from '@/components/intel/Ring';
+import { getCityVenues, getMe, modelEventDeal, type DealModelResponse } from '@/lib/api';
+import { inr, inrCompact, num } from '@/lib/format';
 import styles from './page.module.css';
 
-function riskColor(risk: string) {
-  if (risk === 'Low') return 'var(--positive)';
-  if (risk === 'Medium') return 'var(--warning)';
-  return 'var(--negative)';
-}
+const ALLOWED = ['executive', 'analyst', 'booker'];
+const riskStyle = (_r: string) => ({ background: 'var(--fill-tertiary)', color: 'var(--text-secondary)' });
+const riskDot = (r: string) => r === 'Low' ? 'var(--positive)' : r === 'Medium' ? 'var(--warning)' : 'var(--negative)';
 
-function ScenarioCard({ label, scenario, active }: { label: string; scenario: DealScenario; active?: boolean }) {
-  const profitable = scenario.net_profit > 0;
+function Tip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
+  if (!active || !payload?.length) return null;
   return (
-    <div className={`${styles.scenarioCard} ${active ? styles.scenarioCardActive : ''}`}>
-      <div className={styles.scenarioHead}>
-        <span className="t-callout text-primary" style={{ fontWeight: 700 }}>{label}</span>
-        <span className="t-caption" style={{ color: 'var(--text-tertiary)' }}>{scenario.fill_rate_pct}% fill</span>
-      </div>
-
-      <div>
-        <span className="t-caption text-tertiary">Attendance</span>
-        <p className="t-headline text-primary" style={{ fontWeight: 700 }}>{scenario.attendance.toLocaleString('en-IN')}</p>
-      </div>
-
-      <div className={styles.scenarioDivider} />
-
-      <div className={styles.scenarioLine}>
-        <span className="text-tertiary">Gross revenue</span>
-        <span className="text-primary" style={{ fontWeight: 600 }}>{scenario.gross_revenue_fmt}</span>
-      </div>
-      <div className={styles.scenarioLine}>
-        <span className="text-tertiary">Artist fee</span>
-        <span className="text-secondary">−{new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(scenario.artist_fee)}</span>
-      </div>
-      <div className={styles.scenarioLine}>
-        <span className="text-tertiary">Venue + ops (est.)</span>
-        <span className="text-secondary">−{new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(scenario.venue_cost + scenario.ops_cost)}</span>
-      </div>
-
-      <div className={styles.scenarioDivider} />
-
-      <div className={styles.scenarioLine}>
-        <span className="t-callout text-primary" style={{ fontWeight: 700 }}>Net profit</span>
-        <span
-          className="t-callout"
-          style={{ fontWeight: 800, color: profitable ? 'var(--positive)' : 'var(--negative)' }}
-        >
-          {scenario.net_profit_fmt}
-        </span>
-      </div>
-      {scenario.margin_pct !== null && (
-        <span className="t-caption text-tertiary">{scenario.margin_pct}% margin</span>
-      )}
+    <div className="glass-card" style={{ padding: '10px 12px', fontSize: '.8125rem', minWidth: 150 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div>
+      {payload.map(p => <div key={p.name} style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}><span style={{ color: p.color }}>{p.name}</span><span className="tnum">{inrCompact(p.value)}</span></div>)}
     </div>
   );
 }
-
-const MARKETS = ['All', 'India', 'Global'] as const;
-type MarketFilter = typeof MARKETS[number];
 
 export default function DealModelerPage() {
   const [entityId, setEntityId] = useState('');
   const [city, setCity] = useState('');
   const [venueId, setVenueId] = useState('');
-  const [manualCapacity, setManualCapacity] = useState('');
+  const [capacity, setCapacity] = useState('');
   const [price, setPrice] = useState('');
-  const [leadDays, setLeadDays] = useState('60');
-  const [market, setMarket] = useState<MarketFilter>('All');
-  const [result, setResult] = useState<DealModelResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [lead, setLead] = useState('60');
+  const [res, setRes] = useState<DealModelResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
 
-  const { data: portfolio } = useSWR('portfolio/deal-model', () => getPortfolio(), { shouldRetryOnError: false });
-  const { data: citiesData } = useSWR('cities/deal-model', () => getCities(), { shouldRetryOnError: false });
-  const { data: venuesData } = useSWR(
-    city ? `venues/${city}` : null,
-    () => getCityVenues(city),
-    { shouldRetryOnError: false }
-  );
+  const { data: me } = useSWR('auth/me', getMe);
+  const roleBlocked = forbidden || (me ? !ALLOWED.includes(me.role?.toLowerCase()) : false);
+  const { data: venuesData } = useSWR(city ? `venues/${city}` : null, () => getCityVenues(city));
+  const venues = useMemo(() => (venuesData?.venues ?? []).filter((v): v is typeof v & { id: string } => !!v.id), [venuesData]);
+  const venue = venues.find(v => v.id === venueId);
 
-  const allEntities = portfolio?.portfolio ?? [];
-  const indiaCount = allEntities.filter(e => !e.is_international).length;
-  const globalCount = allEntities.filter(e => e.is_international).length;
-  const entities = allEntities.filter(e => {
-    if (market === 'India') return !e.is_international;
-    if (market === 'Global') return e.is_international;
-    return true;
-  });
-  const cities = citiesData?.cities ?? [];
-  const venues = (venuesData?.venues ?? []).filter(
-    (v): v is typeof v & { id: string } => v.id !== null
-  );
-
-  async function handleSubmit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!entityId || !city || !price) {
-      setError('Select an artist, city, and ticket price before running the simulation.');
-      return;
-    }
-    if (!venueId && !manualCapacity) {
-      setError('Select a venue, or enter a venue capacity manually.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
+    setErr(null);
+    const p = Number(price), cap = Number(capacity), ld = Number(lead);
+    if (!entityId) return setErr('Choose an artist to model.');
+    if (!city) return setErr('Choose a city.');
+    if (!p || p < 100 || p > 50000) return setErr('Ticket price must be between ₹100 and ₹50,000.');
+    if (!venueId && (!cap || cap < 100 || cap > 100000)) return setErr('Pick a venue, or enter a capacity between 100 and 1,00,000.');
+    if (!ld || ld < 1 || ld > 730) return setErr('Lead time must be between 1 and 730 days.');
+    setBusy(true);
     try {
-      const res = await modelEventDeal({
-        entity_id: entityId,
-        city,
-        venue_id: venueId || undefined,
-        venue_capacity: venueId ? undefined : Number(manualCapacity),
-        ticket_price: Number(price),
-        lead_days: Number(leadDays) || 60,
-      });
-      setResult(res);
-    } catch (err: any) {
-      setError(err.message ?? 'Failed to model this deal. Ensure the backend is running.');
-    } finally {
-      setLoading(false);
-    }
+      setRes(await modelEventDeal({ entity_id: entityId, city, venue_id: venueId || undefined, venue_capacity: venueId ? undefined : cap, ticket_price: p, lead_days: ld }));
+    } catch (x) {
+      const m = x instanceof Error ? x.message : '';
+      if (/API 403/.test(m)) setForbidden(true);
+      else if (/API 404/.test(m)) setErr('This artist or venue could not be found. Try another selection.');
+      else if (/API 4\d\d/.test(m)) setErr('Those inputs were rejected by the model. Check the values and try again.');
+      else setErr('The simulation service is unavailable right now. Please retry in a moment.');
+    } finally { setBusy(false); }
   }
 
+  const chartData = res ? (['conservative', 'expected', 'optimistic'] as const).map(k => ({
+    name: k[0].toUpperCase() + k.slice(1), Revenue: res.scenarios[k].gross_revenue, Cost: res.scenarios[k].total_cost, Profit: res.scenarios[k].net_profit,
+  })) : [];
+  const ex = res?.scenarios.expected;
+  const be = res?.break_even;
+  const pred = res?.prediction.predicted_fill_rate_pct ?? 0;
+  const beFill = be?.fill_rate_pct ?? null;
+
+  const tone = (n: number) => (n >= 0 ? 'var(--positive)' : 'var(--negative)');
+  const costParts = ex ? [['Artist', ex.artist_fee, 'var(--c1)'], ['Venue', ex.venue_cost, 'var(--c3)'], ['Operations', ex.ops_cost, 'var(--c5)']] as const : [];
+  const costTotal = ex?.total_cost || 1;
+
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Event Deal Modeler" subtitle="Full P&L simulation before you book — artist fee, venue, and 3 fill-rate scenarios" />
-
-      <div className={styles.page}>
-        <GlassCard className={styles.formCard} delay={0.04}>
-          <div className={styles.formHeader}>
-            <Calculator size={18} color="var(--accent)" />
-            <div>
-              <h2 className="t-headline text-primary">Configure the Deal</h2>
-              <p className="t-footnote text-tertiary">Pick the artist, city, venue, and your proposed ticket price</p>
+    <Page title="Deal Modeler" subtitle="Simulate revenue, cost and break-even before you book">
+      <div className={styles.layout}>
+        <form className={styles.form} onSubmit={submit} noValidate>
+          {roleBlocked && (
+            <div className={styles.lock} role="status">
+              <Lock size={16} />
+              <span><b>Booking roles only.</b> The deal modeler is available to Executive, Analyst and Booker accounts{me ? <>; you’re signed in as <b>{me.role}</b></> : ''}. Ask an admin to change your role.</span>
             </div>
-          </div>
+          )}
+          <FormGroup title="The act">
+            <FormRow label="Artist" htmlFor="m-artist"><EntityPicker id="m-artist" value={entityId} onChange={id => setEntityId(id)} placeholder="Choose" /></FormRow>
+            <FormRow label="City" htmlFor="m-city"><CityPicker id="m-city" value={city} onChange={c => { setCity(c); setVenueId(''); }} /></FormRow>
+            <FormRow label="Venue" htmlFor="m-venue">
+              <select id="m-venue" className="input" value={venueId} onChange={e => setVenueId(e.target.value)} disabled={!city || venues.length === 0}>
+                <option value="">{!city ? 'Pick a city first' : venues.length ? 'Enter capacity instead' : venuesData ? 'None on file' : 'Loading…'}</option>
+                {venues.map(v => <option key={v.id} value={v.id}>{v.name} · {num(v.capacity)}</option>)}
+              </select>
+            </FormRow>
+            {!venueId && <FormRow label="Capacity" htmlFor="m-cap"><input id="m-cap" className="input tnum" inputMode="numeric" placeholder="e.g. 5,000" value={capacity} onChange={e => setCapacity(e.target.value.replace(/\D/g, ''))} /></FormRow>}
+          </FormGroup>
+          <FormGroup title="The deal">
+            <FormRow label="Ticket price" htmlFor="m-price"><span style={{ color: 'var(--text-secondary)', fontWeight: 600, width: 'auto' }}>₹</span><input id="m-price" className="input tnum" style={{ width: '7ch', flex: '0 0 auto', textAlign: 'left' }} inputMode="numeric" placeholder="1,500" value={price} onChange={e => setPrice(e.target.value.replace(/\D/g, ''))} /></FormRow>
+            <FormRow label="Lead time" htmlFor="m-lead"><input id="m-lead" className="input tnum" style={{ width: '4ch', flex: '0 0 auto', textAlign: 'left' }} inputMode="numeric" value={lead} onChange={e => setLead(e.target.value.replace(/\D/g, ''))} /><span style={{ color: 'var(--text-secondary)', width: 'auto', marginLeft: 6 }}>days</span></FormRow>
+          </FormGroup>
+          {err && <div className={styles.err} role="alert">{err}</div>}
+          <button type="submit" className="btn btn-primary" disabled={busy || roleBlocked} style={{ minHeight: 50, fontSize: '1rem' }}>
+            {busy ? <><Loader2 size={16} className="spin" /> Simulating…</> : 'Run simulation'}
+          </button>
+        </form>
 
-          <form onSubmit={handleSubmit} className={styles.form}>
-            {/* Market toggle */}
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {MARKETS.map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setMarket(m); setEntityId(''); }}
-                  style={{
-                    padding: '4px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 500,
-                    background: market === m ? 'var(--accent-dim)' : 'var(--glass-fill)',
-                    border: `1px solid ${market === m ? 'var(--accent)' : 'var(--glass-border)'}`,
-                    color: market === m ? 'var(--accent)' : 'var(--text-secondary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {m}
-                  {m === 'India' && ` (${indiaCount})`}
-                  {m === 'Global' && ` (${globalCount})`}
-                </button>
-              ))}
-            </div>
-
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="deal-entity">Artist / Act</label>
-                <div className={styles.selectWrap}>
-                  <select id="deal-entity" className={`input ${styles.select}`} value={entityId} onChange={e => setEntityId(e.target.value)} required>
-                    <option value="">Select artist...</option>
-                    {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-                {entities.length === 0 && (
-                  <p className="t-caption text-tertiary" style={{ marginTop: 4 }}>
-                    {allEntities.length === 0 ? 'Backend offline — start FastAPI to load artists' : `No ${market} artists match`}
-                  </p>
-                )}
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="deal-city">City</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    id="deal-city"
-                    className={`input ${styles.select}`}
-                    value={city}
-                    onChange={e => { setCity(e.target.value); setVenueId(''); }}
-                    required
-                    disabled={cities.length === 0}
-                  >
-                    <option value="">{cities.length > 0 ? 'Select city...' : 'Cities unavailable'}</option>
-                    {cities.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="deal-venue">Venue</label>
-                <div className={styles.selectWrap}>
-                  <select
-                    id="deal-venue"
-                    className={`input ${styles.select}`}
-                    value={venueId}
-                    onChange={e => setVenueId(e.target.value)}
-                    disabled={!city || venues.length === 0}
-                  >
-                    <option value="">{!city ? 'Select a city first' : venues.length === 0 ? 'No venues on file — enter capacity below' : 'Select venue...'}</option>
-                    {venues.map(v => (
-                      <option key={v.id} value={v.id}>{v.name} ({v.capacity?.toLocaleString('en-IN') ?? '—'} cap)</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-
-              {!venueId && (
-                <div className={styles.field}>
-                  <label className={styles.label} htmlFor="deal-capacity">Venue Capacity (manual)</label>
-                  <input
-                    id="deal-capacity"
-                    className="input"
-                    type="number"
-                    min={100}
-                    max={100000}
-                    placeholder="e.g. 5000"
-                    value={manualCapacity}
-                    onChange={e => setManualCapacity(e.target.value)}
-                    required={!venueId}
-                  />
-                </div>
-              )}
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="deal-price">Ticket Price (₹)</label>
-                <input
-                  id="deal-price"
-                  className="input"
-                  type="number"
-                  min={100}
-                  max={50000}
-                  placeholder="e.g. 3500"
-                  value={price}
-                  onChange={e => setPrice(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="deal-lead-days">Lead Time (days until event)</label>
-                <input
-                  id="deal-lead-days"
-                  className="input"
-                  type="number"
-                  min={1}
-                  max={730}
-                  value={leadDays}
-                  onChange={e => setLeadDays(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {error && (
-              <div className={styles.errorBox}>
-                <AlertCircle size={16} color="var(--negative)" />
-                <span className="t-callout" style={{ color: 'var(--negative)' }}>{error}</span>
-              </div>
-            )}
-
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ alignSelf: 'flex-start' }}>
-              {loading ? 'Modeling deal...' : 'Run P&L Simulation'}
-            </button>
-          </form>
-        </GlassCard>
-
-        {result && (
-          <motion.div className={styles.resultWrap} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            {/* Hero summary */}
-            <GlassCard className={styles.heroCard} delay={0}>
-              <div className={styles.heroTop}>
-                <div>
-                  <p className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.6875rem', marginBottom: 6 }}>
-                    {result.entity.name} · {result.venue.name ?? `${result.venue.capacity.toLocaleString('en-IN')} cap venue`} · {result.venue.city}
-                  </p>
-                  <h2 className="t-title2 text-primary" style={{ fontWeight: 800 }}>
-                    Expected net: {result.scenarios.expected.net_profit_fmt}
-                  </h2>
-                </div>
-                <div className={styles.riskBadge} style={{
-                  color: riskColor(result.risk_level),
-                  borderColor: riskColor(result.risk_level) + '50',
-                  background: riskColor(result.risk_level) + '18',
-                }}>
-                  {result.risk_level === 'Low' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
-                  {result.risk_level} Risk
-                </div>
-              </div>
-
-              <div className={styles.metricsRow}>
-                <div className={styles.metricBox}>
-                  <span className="t-caption text-tertiary">Predicted Fill Rate</span>
-                  <span className="t-headline text-primary" style={{ fontWeight: 700 }}>{result.prediction.predicted_fill_rate_pct}%</span>
-                  <span className="t-caption text-tertiary">
-                    {result.prediction.model === 'ml_gbr' ? `ML model · ${result.prediction.confidence_pct}% confidence` : 'Rule-based fallback'}
-                    {result.prediction.model_data_source === 'synthetic' && ' · trained on synthetic data'}
-                  </span>
-                </div>
-                <div className={styles.metricBox}>
-                  <span className="t-caption text-tertiary">Artist Fee</span>
-                  <span className="t-headline text-primary" style={{ fontWeight: 700 }}>{result.artist_fee.amount_fmt}</span>
-                  <span className="t-caption text-tertiary">{result.artist_fee.source === 'real' ? 'From booking price range' : result.artist_fee.source}</span>
-                </div>
-                <div className={styles.metricBox}>
-                  <span className="t-caption text-tertiary">Break-Even</span>
-                  <span className="t-headline text-primary" style={{ fontWeight: 700 }}>
-                    {result.break_even.tickets?.toLocaleString('en-IN') ?? '—'} tickets
-                  </span>
-                  <span className="t-caption" style={{ color: result.break_even.achievable ? 'var(--positive)' : 'var(--negative)' }}>
-                    {result.break_even.achievable
-                      ? `${result.break_even.fill_rate_pct}% fill — achievable`
-                      : `${result.break_even.fill_rate_pct}% fill — exceeds venue capacity`}
-                  </span>
-                </div>
-                <div className={styles.metricBox}>
-                  <span className="t-caption text-tertiary">Composite Score</span>
-                  <span className="t-headline text-primary" style={{ fontWeight: 700 }}>{result.entity.composite_score}/100</span>
-                  <span className="t-caption text-tertiary">{result.entity.has_live_metrics ? 'Live metrics' : 'No metrics yet'}</span>
-                </div>
-              </div>
+        <div className={styles.results}>
+          {busy && !res ? (
+            <div className={styles.bento}><Skeleton height={230} radius={26} className={styles.s8} /><Skeleton height={230} radius={26} className={styles.s4} /><Skeleton height={280} radius={26} className={styles.s12} /></div>
+          ) : !res ? (
+            <GlassCard className={styles.empty}>
+              <EmptyState icon={<TrendingUp size={36} strokeWidth={1.4} />} title="Your P&L appears here" message="Choose an artist, a city and a ticket price to see predicted fill, profit and break-even in ₹ lakh and crore." />
             </GlassCard>
-
-            {/* 3 scenarios */}
-            <div className={styles.scenarioGrid}>
-              <ScenarioCard label="Conservative" scenario={result.scenarios.conservative} />
-              <ScenarioCard label="Expected" scenario={result.scenarios.expected} active />
-              <ScenarioCard label="Optimistic" scenario={result.scenarios.optimistic} />
-            </div>
-
-            {/* PredictHQ market context — real external cross-check, not fabricated */}
-            {result.market_context?.predicthq?.comparable_events_found > 0 && (
-              <GlassCard style={{ padding: 18 }} delay={0.12}>
-                <div className={styles.noteBox}>
-                  <TrendingUp size={15} color="var(--accent)" style={{ flexShrink: 0, marginTop: 1 }} />
-                  <div>
-                    <p className="t-callout text-primary" style={{ fontWeight: 700, marginBottom: 4 }}>
-                      Market Context — PredictHQ
-                    </p>
-                    <p className="t-caption text-tertiary" style={{ lineHeight: 1.6 }}>
-                      {result.market_context.predicthq.comparable_events_found} real comparable event(s) found in this date window
-                      {result.market_context.predicthq.avg_rank != null && ` · avg significance rank ${result.market_context.predicthq.avg_rank}/100`}
-                      {result.market_context.predicthq.avg_predicted_attendance != null && ` · avg predicted attendance ${result.market_context.predicthq.avg_predicted_attendance.toLocaleString('en-IN')}`}
-                    </p>
-                    <p className="t-caption text-tertiary" style={{ lineHeight: 1.6, marginTop: 4, opacity: 0.75 }}>
-                      {result.market_context.predicthq.source}
-                    </p>
-                  </div>
+          ) : (
+            <motion.div key={res.entity.id + res.inputs.ticket_price + res.venue.capacity} className={styles.bento} style={{ opacity: busy ? .55 : 1 }} initial={{ opacity: 0, y: 14 }} animate={{ opacity: busy ? .55 : 1, y: 0 }} transition={{ type: 'spring', stiffness: 220, damping: 26 }}>
+              <GlassCard className={`${styles.hero} ${styles.s8}`}>
+                <div className={styles.heroTop}>
+                  <span className={styles.eyebrow}>{res.entity.name} · {res.venue.name ?? res.venue.city}</span>
+                  <span className={styles.risk} style={riskStyle(res.risk_level)}><i className={styles.dot} style={{ background: riskDot(res.risk_level), marginRight: 6, alignSelf: 'center' }} />{res.risk_level} risk</span>
+                </div>
+                <div className={styles.big} style={{ color: tone(ex?.net_profit ?? 0) }}>{inrCompact(ex?.net_profit)}</div>
+                <div className={styles.bigSub}>expected net profit · {ex?.margin_pct != null ? `${ex.margin_pct}% margin` : '—'}</div>
+                <div className={styles.heroStats}>
+                  <div><b>{inrCompact(ex?.gross_revenue)}</b><span>revenue</span></div>
+                  <div><b>{inrCompact(ex?.total_cost)}</b><span>total cost</span></div>
+                  <div><b>{num(ex?.attendance)}</b><span>of {num(res.venue.capacity)} seats</span></div>
                 </div>
               </GlassCard>
-            )}
 
-            {/* Cost model disclosure */}
-            <GlassCard style={{ padding: 18 }} delay={0.1}>
-              <div className={styles.noteBox}>
-                <Info size={15} color="var(--text-tertiary)" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p className="t-caption text-tertiary" style={{ lineHeight: 1.6 }}>{result.cost_model_note}</p>
-              </div>
-            </GlassCard>
-          </motion.div>
-        )}
+              <GlassCard className={`${styles.ringCard} ${styles.s4}`} delay={.05}>
+                <Ring value={pred} tick={beFill} size={148} stroke={15} color="var(--accent)">
+                  <div><div className={styles.ringNum}>{pred}<small>%</small></div><div className={styles.ringLbl}>predicted fill</div></div>
+                </Ring>
+                <p className={styles.ringNote}>{be?.achievable && be.tickets != null ? <>Break-even at <b style={{ color: 'var(--saffron)' }}>{beFill}%</b> · {num(be.tickets)} tickets</> : 'Break-even not reachable at this price'}</p>
+              </GlassCard>
 
-        {!result && !loading && (
-          <GlassCard className={styles.placeholder} delay={0.1}>
-            <Ticket size={32} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-tertiary" style={{ marginTop: 16 }}>Configure a deal above to see the P&L simulation</p>
-          </GlassCard>
-        )}
+              <GlassCard className={`${styles.pad} ${styles.s7}`} delay={.08}>
+                <div className={styles.head}><h2 className="t-headline">Three scenarios</h2><span className="t-footnote text-tertiary">at {inr(res.inputs.ticket_price)} per ticket</span></div>
+                <div className={styles.chart}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 4, right: 4, left: -6, bottom: 0 }} barGap={4}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                      <YAxis tickFormatter={v => inrCompact(v)} axisLine={false} tickLine={false} width={60} />
+                      <Tooltip content={<Tip />} cursor={{ fill: 'var(--fill-quaternary)' }} />
+                      <Legend iconType="circle" iconSize={8} />
+                      <Bar dataKey="Revenue" fill="var(--c1)" radius={[7, 7, 2, 2]} animationDuration={700} />
+                      <Bar dataKey="Cost" fill="var(--c3)" radius={[7, 7, 2, 2]} animationDuration={700} />
+                      <Bar dataKey="Profit" fill="var(--text-primary)" fillOpacity={.85} radius={[7, 7, 2, 2]} animationDuration={700} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </GlassCard>
+
+              <GlassCard className={`${styles.pad} ${styles.s5}`} delay={.11}>
+                <div className={styles.head}><h2 className="t-headline">Where the money goes</h2></div>
+                <div className={styles.stack}>{costParts.map(([l, v, c]) => <motion.i key={l} style={{ background: c }} initial={{ flexGrow: 0 }} animate={{ flexGrow: v }} transition={{ type: 'spring', stiffness: 90, damping: 20 }} />)}</div>
+                {costParts.map(([l, v, c]) => (
+                  <div key={l} className={styles.costRow}><span><i className={styles.dot} style={{ background: c }} />{l}</span><span><b className="tnum">{inrCompact(v)}</b> <small className="text-tertiary">{Math.round((v / costTotal) * 100)}%</small></span></div>
+                ))}
+                <p className={styles.note} style={{ marginTop: 8 }}>Artist fee {res.artist_fee.amount_fmt}{res.artist_fee.range_min != null && res.artist_fee.range_max != null ? ` (range ${inrCompact(res.artist_fee.range_min)} to ${inrCompact(res.artist_fee.range_max)})` : ''}</p>
+              </GlassCard>
+
+              <GlassCard className={`${styles.listCard} ${styles.s12}`} delay={.14}>
+                {(['conservative', 'expected', 'optimistic'] as const).map(k => {
+                  const s = res.scenarios[k];
+                  return (
+                    <div key={k} className={`${styles.srow} ${k === 'expected' ? styles.srowOn : ''}`}>
+                      <div style={{ minWidth: 0 }}><b style={{ textTransform: 'capitalize' }}>{k}</b><span className="t-caption text-tertiary"> · {s.fill_rate_pct}% fill · {num(s.attendance)} tickets</span></div>
+                      <span className="tnum text-secondary">{inrCompact(s.gross_revenue)}</span>
+                      <b className="tnum" style={{ color: tone(s.net_profit), minWidth: 78, textAlign: 'right' }}>{inrCompact(s.net_profit)}</b>
+                    </div>
+                  );
+                })}
+              </GlassCard>
+              <p className={`${styles.note} ${styles.s12}`}>
+                Model {res.prediction.model}, confidence {res.prediction.confidence_pct}%{res.prediction.model_data_source ? `, ${res.prediction.model_data_source}` : ''}. {res.cost_model_note}
+                {res.market_context?.predicthq?.comparable_events_found > 0 && <> PredictHQ found {res.market_context.predicthq.comparable_events_found} comparable events nearby{res.market_context.predicthq.avg_predicted_attendance != null ? ` (avg predicted attendance ${num(Math.round(res.market_context.predicthq.avg_predicted_attendance))})` : ''}.</>}
+              </p>
+            </motion.div>
+          )}
+        </div>
       </div>
-    </div>
+    </Page>
   );
 }

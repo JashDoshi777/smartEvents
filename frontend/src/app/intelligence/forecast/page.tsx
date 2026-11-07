@@ -1,240 +1,178 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { motion } from 'framer-motion';
-import {
-  LineChart, Line, ResponsiveContainer, Tooltip, CartesianGrid, XAxis, YAxis, Area, ComposedChart,
-} from 'recharts';
-import {
-  LineChart as LineChartIcon, ChevronDown, AlertCircle, Info, TrendingUp, TrendingDown, Minus,
-} from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { LineChart as LineIcon, TrendingDown, TrendingUp, Minus, Hourglass } from 'lucide-react';
+import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { getPortfolio, getDemandForecast, DemandForecastResponse } from '@/lib/api';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { EmptyState, ErrorState } from '@/components/ui/States';
+import { Segmented } from '@/components/ui/Controls';
+import { Field, EntityPicker } from '@/components/intel/Pickers';
+import { getDemandForecast, getPortfolio, type DemandForecastResponse } from '@/lib/api';
+import { dateIN } from '@/lib/format';
 import styles from './page.module.css';
 
-const MARKETS = ['All', 'India', 'Global'] as const;
-type MarketFilter = typeof MARKETS[number];
+type Row = { date: string; history?: number; predicted?: number; band?: [number, number] };
 
-function trendColor(direction?: string) {
-  if (direction === 'rising') return 'var(--positive)';
-  if (direction === 'falling') return 'var(--negative)';
-  return 'var(--text-tertiary)';
+function Tip({ active, payload, label }: { active?: boolean; payload?: { dataKey: string; value: number | [number, number] }[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const get = (k: string) => payload.find(p => p.dataKey === k)?.value;
+  const h = get('history') as number | undefined, p = get('predicted') as number | undefined, b = get('band') as [number, number] | undefined;
+  return (
+    <div className="glass-card" style={{ padding: '10px 12px', fontSize: '.8125rem', minWidth: 150 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{dateIN(label)}</div>
+      {h != null && <div className="tnum">Observed: {h.toFixed(0)}</div>}
+      {p != null && <div className="tnum">Forecast: {p.toFixed(0)}</div>}
+      {b && <div className="tnum text-tertiary">Range: {b[0].toFixed(0)} – {b[1].toFixed(0)}</div>}
+    </div>
+  );
 }
 
-function TrendIcon({ direction }: { direction?: string }) {
-  if (direction === 'rising') return <TrendingUp size={15} />;
-  if (direction === 'falling') return <TrendingDown size={15} />;
-  return <Minus size={15} />;
+function errorCopy(m: string) {
+  if (/API 503/.test(m)) return 'The forecasting engine (Prophet) isn’t installed on the server, so forecasts are unavailable.';
+  if (/API 404/.test(m)) return 'We couldn’t find that artist.';
+  if (/API 500/.test(m)) return 'The model couldn’t fit this artist’s data. Try a different artist or horizon.';
+  return 'Couldn’t reach the forecast service. Please try again.';
 }
 
-export default function DemandForecastPage() {
+export default function ForecastPage() {
   const [entityId, setEntityId] = useState('');
   const [months, setMonths] = useState('3');
-  const [market, setMarket] = useState<MarketFilter>('All');
-  const [result, setResult] = useState<DemandForecastResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const { data: portfolio } = useSWR('portfolio/forecast', () => getPortfolio(), { shouldRetryOnError: false });
+  const { data: portfolio } = useSWR('portfolio/picker', () => getPortfolio());
+  const quick = useMemo(() => (portfolio?.portfolio ?? []).filter(e => !e.is_international && e.google_trend_score != null).slice(0, 5), [portfolio]);
 
-  const allEntities = portfolio?.portfolio ?? [];
-  const indiaCount = allEntities.filter(e => !e.is_international).length;
-  const globalCount = allEntities.filter(e => e.is_international).length;
-  const entities = allEntities.filter(e => {
-    if (market === 'India') return !e.is_international;
-    if (market === 'Global') return e.is_international;
-    return true;
-  });
+  const { data, error, isLoading, isValidating, mutate } = useSWR<DemandForecastResponse>(
+    entityId ? `forecast/${entityId}/${months}` : null,
+    () => getDemandForecast(entityId, { months: Number(months) }),
+    { shouldRetryOnError: false, revalidateOnFocus: false },
+  );
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!entityId) {
-      setError('Select an artist to forecast.');
-      return;
-    }
+  const rows: Row[] = useMemo(() => {
+    if (!data) return [];
+    const h: Row[] = data.history.map(p => ({ date: p.date, history: p.google_trend_score }));
+    const f: Row[] = (data.forecast ?? []).map(p => ({ date: p.date, predicted: p.predicted_trend_score, band: [p.lower_bound, p.upper_bound] as [number, number] }));
+    // connect the lines at the junction
+    if (h.length && f.length) h[h.length - 1].predicted = h[h.length - 1].history;
+    return [...h, ...f];
+  }, [data]);
 
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await getDemandForecast(entityId, { months: Number(months) || 3 });
-      setResult(res);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch forecast. Ensure the backend is running.');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Merge history + forecast into one chart series, keyed on a numeric
-  // timestamp (not the date string) so the x-axis reflects true elapsed
-  // calendar time. History points are collected every few days while the
-  // forecast is daily — a category axis would space both by point COUNT,
-  // visually crushing the sparser-but-longer-spanning history segment.
-  const chartData = result ? [
-    ...result.history.map(h => ({ ts: new Date(h.date).getTime(), date: h.date, actual: h.google_trend_score, predicted: null, lower: null, upper: null })),
-    ...(result.forecast ?? []).map(f => ({
-      ts: new Date(f.date).getTime(), date: f.date, actual: null, predicted: f.predicted_trend_score, lower: f.lower_bound, upper: f.upper_bound,
-    })),
-  ].sort((a, b) => a.ts - b.ts) : [];
+  const dir = data?.trend_direction;
+  const dirColor = dir === 'rising' ? 'var(--positive)' : dir === 'falling' ? 'var(--negative)' : 'var(--text-secondary)';
+  const DirIcon = dir === 'rising' ? TrendingUp : dir === 'falling' ? TrendingDown : Minus;
+  const last = data?.forecast?.[data.forecast.length - 1];
+  const hasForecast = data?.status === 'ok' && !!data.forecast?.length;
+  const loading = !!entityId && isLoading && !data;
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="Demand Forecast" subtitle="Prophet-based projection of Google Trends interest, built from real tracked history" />
-
-      <div className={styles.page}>
-        <GlassCard className={styles.formCard} delay={0.04}>
-          <div className={styles.formHeader}>
-            <LineChartIcon size={18} color="var(--accent)" />
-            <div>
-              <h2 className="t-headline text-primary">Configure the Forecast</h2>
-              <p className="t-footnote text-tertiary">Requires at least 10 tracked data points spanning 21+ days — entities with less history will show what's missing instead of a fabricated forecast</p>
+    <Page title="Demand Forecast" subtitle="Where an artist’s search interest is heading next">
+      <div className={styles.layout}>
+        <GlassCard className={styles.controls}>
+          <Field label="Artist or act" htmlFor="f-ent"><EntityPicker id="f-ent" value={entityId} onChange={id => setEntityId(id)} /></Field>
+          <Field label="Horizon">
+            <Segmented ariaLabel="Forecast horizon" value={months} onChange={setMonths} options={[{ value: '1', label: '1 mo' }, { value: '3', label: '3 mo' }, { value: '6', label: '6 mo' }, { value: '12', label: '12 mo' }]} />
+          </Field>
+          {quick.length > 0 && (
+            <div className={styles.chips} aria-label="Quick picks">
+              <span className="t-caption text-tertiary">Quick picks</span>
+              {quick.map(e => <button key={e.id} type="button" className="chip" aria-pressed={entityId === e.id} onClick={() => setEntityId(e.id)}>{e.name}</button>)}
             </div>
-          </div>
-
-          <form onSubmit={handleSubmit} className={styles.form}>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {MARKETS.map(m => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => { setMarket(m); setEntityId(''); }}
-                  style={{
-                    padding: '4px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 500,
-                    background: market === m ? 'var(--accent-dim)' : 'var(--glass-fill)',
-                    border: `1px solid ${market === m ? 'var(--accent)' : 'var(--glass-border)'}`,
-                    color: market === m ? 'var(--accent)' : 'var(--text-secondary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {m}
-                  {m === 'India' && ` (${indiaCount})`}
-                  {m === 'Global' && ` (${globalCount})`}
-                </button>
-              ))}
-            </div>
-
-            <div className={styles.formGrid}>
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="forecast-entity">Artist / Act</label>
-                <div className={styles.selectWrap}>
-                  <select id="forecast-entity" className={`input ${styles.select}`} value={entityId} onChange={e => setEntityId(e.target.value)} required>
-                    <option value="">Select artist...</option>
-                    {entities.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-
-              <div className={styles.field}>
-                <label className={styles.label} htmlFor="forecast-months">Months Ahead</label>
-                <div className={styles.selectWrap}>
-                  <select id="forecast-months" className={`input ${styles.select}`} value={months} onChange={e => setMonths(e.target.value)}>
-                    {[1, 2, 3, 6, 12].map(m => <option key={m} value={m}>{m} month{m > 1 ? 's' : ''}</option>)}
-                  </select>
-                  <ChevronDown size={14} className={styles.selectIcon} />
-                </div>
-              </div>
-            </div>
-
-            {error && (
-              <div className={styles.errorBox}>
-                <AlertCircle size={16} color="var(--negative)" />
-                <span className="t-callout" style={{ color: 'var(--negative)' }}>{error}</span>
-              </div>
-            )}
-
-            <button type="submit" className="btn btn-primary" disabled={loading} style={{ alignSelf: 'flex-start' }}>
-              {loading ? 'Forecasting...' : 'Run Forecast'}
-            </button>
-          </form>
+          )}
         </GlassCard>
 
-        {result && result.status === 'insufficient_history' && (
-          <GlassCard className={styles.insufficientBox} delay={0.05}>
-            <Info size={32} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-primary">Not enough history yet for {result.entity.name}</p>
-            <p className="t-callout text-tertiary" style={{ maxWidth: 480 }}>{result.message}</p>
-            <p className="t-caption text-tertiary">
-              {result.history_points} point(s) tracked · {result.history_span_days} day(s) span · needs {result.minimum_required?.points}+ points across {result.minimum_required?.span_days}+ days
-            </p>
-          </GlassCard>
-        )}
-
-        {result && result.status === 'ok' && (
-          <motion.div className={styles.resultWrap} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-            <GlassCard className={styles.heroCard} delay={0}>
-              <div className={styles.heroTop}>
-                <div>
-                  <p className="t-label text-tertiary" style={{ textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: '0.6875rem', marginBottom: 6 }}>
-                    {result.entity.name} · {result.history_points} real data points · {result.history_span_days} days of history
-                  </p>
-                  <h2 className="t-title2 text-primary" style={{ fontWeight: 800 }}>
-                    Google Trends interest is {result.trend_direction}
-                  </h2>
-                </div>
-                <div className={styles.trendBadge} style={{
-                  color: trendColor(result.trend_direction),
-                  borderColor: trendColor(result.trend_direction) + '50',
-                  background: trendColor(result.trend_direction) + '18',
-                }}>
-                  <TrendIcon direction={result.trend_direction} />
-                  {result.trend_direction}
-                </div>
+        {!entityId ? (
+          <GlassCard><EmptyState icon={<LineIcon size={36} strokeWidth={1.4} />} title="Pick an artist to forecast" message="We project Google Trends interest using Prophet, with an 80% confidence band." /></GlassCard>
+        ) : loading ? (
+          <>
+            <div className={styles.tiles}>{[0, 1, 2, 3].map(i => <Skeleton key={i} height={104} radius={22} />)}</div>
+            <Skeleton height={380} radius={22} />
+          </>
+        ) : error && !data ? (
+          <GlassCard><ErrorState message={errorCopy(error instanceof Error ? error.message : '')} onRetry={() => mutate()} /></GlassCard>
+        ) : data ? (
+          <div className={styles.bento} style={{ opacity: isValidating ? .6 : 1, transition: 'opacity .2s' }}>
+            <GlassCard className={`${styles.hero} ${styles.s4}`}>
+              <span className={styles.eyebrow}>{data.entity.name}</span>
+              {hasForecast && last ? (
+                <>
+                  <div className={styles.big}>{last.predicted_trend_score.toFixed(0)}</div>
+                  <div className={styles.bigSub}>projected interest in {months} month{months === '1' ? '' : 's'}</div>
+                  <div className={styles.trendLine} style={{ color: dirColor }}><DirIcon size={16} /> <span>{dir}</span><span className="text-tertiary"> · range {last.lower_bound.toFixed(0)} to {last.upper_bound.toFixed(0)}</span></div>
+                </>
+              ) : (
+                <>
+                  <div className={styles.big} style={{ color: 'var(--text-tertiary)' }}>—</div>
+                  <div className={styles.bigSub}>No forecast yet</div>
+                </>
+              )}
+              <div className={styles.heroStats}>
+                <div><b>{data.history_points}</b><span>data points</span></div>
+                <div><b>{data.history_span_days}</b><span>days covered</span></div>
+                <div><b>{data.history.length ? Math.round(data.history[data.history.length - 1].google_trend_score) : '—'}</b><span>latest signal</span></div>
               </div>
             </GlassCard>
 
-            <GlassCard className={styles.chartCard} delay={0.05}>
-              <h3 className="t-headline text-primary" style={{ marginBottom: 4 }}>Trend Score — History &amp; Forecast</h3>
-              <p className="t-footnote text-tertiary" style={{ marginBottom: 14 }}>Solid line is real tracked data; dashed region is the Prophet projection with an 80% confidence band</p>
-              <ResponsiveContainer width="100%" height={280}>
-                <ComposedChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="forecastBand" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.18} />
-                      <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--divider)" vertical={false} />
-                  <XAxis
-                    dataKey="ts"
-                    type="number"
-                    scale="time"
-                    domain={['dataMin', 'dataMax']}
-                    tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }}
-                    axisLine={false} tickLine={false} minTickGap={60}
-                    tickFormatter={(ts: number) => new Date(ts).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
-                  />
-                  <YAxis tick={{ fontSize: 10, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{ background: 'var(--bg-overlay)', border: '1px solid var(--glass-border)', borderRadius: 10, fontSize: 11 }}
-                    labelFormatter={(ts: React.ReactNode) => new Date(Number(ts)).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  />
-                  <Area type="monotone" dataKey="upper" stroke="none" fill="url(#forecastBand)" isAnimationActive={false} />
-                  <Area type="monotone" dataKey="lower" stroke="none" fill="var(--bg-base)" isAnimationActive={false} />
-                  <Line type="monotone" dataKey="actual" stroke="var(--text-primary)" strokeWidth={2} dot={false} connectNulls={false} />
-                  <Line type="monotone" dataKey="predicted" stroke="var(--accent)" strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </GlassCard>
-
-            <GlassCard style={{ padding: 18 }} delay={0.1}>
-              <div className={styles.noteBox}>
-                <Info size={15} color="var(--text-tertiary)" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p className="t-caption text-tertiary" style={{ lineHeight: 1.6 }}>{result.methodology}</p>
-              </div>
-            </GlassCard>
-          </motion.div>
-        )}
-
-        {!result && !loading && (
-          <GlassCard className={styles.placeholder} delay={0.1}>
-            <LineChartIcon size={32} color="var(--text-tertiary)" strokeWidth={1.5} />
-            <p className="t-headline text-tertiary" style={{ marginTop: 16 }}>Select an artist above to see their demand forecast</p>
-          </GlassCard>
-        )}
+            {hasForecast ? (
+              <GlassCard className={`${styles.pad} ${styles.s8}`} delay={.05}>
+                <div className={styles.head}>
+                  <h2 className="t-headline">Search interest</h2>
+                  <span className={styles.legend}><i style={{ background: 'var(--text-secondary)' }} /> Observed <i style={{ background: 'var(--accent)', marginLeft: 12 }} /> Forecast</span>
+                </div>
+                <div className={styles.chart}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={rows} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
+                      <defs><linearGradient id="band" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--accent)" stopOpacity={.28} /><stop offset="100%" stopColor="var(--accent)" stopOpacity={0} /></linearGradient></defs>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="date" tickFormatter={d => dateIN(d, { day: 'numeric', month: 'short' })} minTickGap={56} axisLine={false} tickLine={false} />
+                      <YAxis domain={[0, 100]} ticks={[0, 50, 100]} axisLine={false} tickLine={false} width={44} />
+                      <Tooltip content={<Tip />} />
+                      <Area dataKey="band" stroke="none" fill="url(#band)" isAnimationActive={false} />
+                      <Line dataKey="history" stroke="var(--text-secondary)" strokeWidth={2} dot={false} activeDot={{ r: 4 }} connectNulls={false} animationDuration={700} />
+                      <Line dataKey="predicted" stroke="var(--accent)" strokeWidth={2} strokeDasharray="5 4" dot={false} animationDuration={900} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+                <p className={styles.note}>{data.methodology ?? 'Prophet forecast on weekly Google Trends readings; the shaded band is the 80% interval.'}</p>
+              </GlassCard>
+            ) : (
+              <GlassCard className={`${styles.pad} ${styles.s8}`} delay={.05}>
+                <div className={styles.center}>
+                  <EmptyState icon={<Hourglass size={34} strokeWidth={1.4} />} title={`Not enough history for ${data.entity.name}`}
+                    message="A forecast on a handful of readings would just be noise. Interest data is collected on a schedule; check back as it builds up." />
+                  {data.minimum_required && (
+                    <div className={styles.progress}>
+                      {[
+                        ['Data points', data.history_points, data.minimum_required.points],
+                        ['Days covered', data.history_span_days, data.minimum_required.span_days],
+                      ].map(([l, v, t]) => (
+                        <div key={l as string} className={styles.pRow}>
+                          <div><span>{l}</span><span className="tnum">{v} / {t}</span></div>
+                          <div className={styles.pTrack}><div className={styles.pFill} style={{ width: `${Math.min(100, ((v as number) / (t as number)) * 100)}%` }} /></div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {rows.length > 1 && (
+                  <div className={styles.chart} style={{ marginTop: 20, height: 180 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={rows} margin={{ top: 6, right: 6, left: -18, bottom: 0 }}>
+                        <CartesianGrid vertical={false} />
+                        <XAxis dataKey="date" tickFormatter={d => dateIN(d, { day: 'numeric', month: 'short' })} minTickGap={48} axisLine={false} tickLine={false} />
+                        <YAxis domain={[0, 100]} ticks={[0, 50, 100]} axisLine={false} tickLine={false} width={44} />
+                        <Tooltip content={<Tip />} />
+                        <Line dataKey="history" stroke="var(--text-secondary)" strokeWidth={2} dot={{ r: 3 }} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </GlassCard>
+            )}
+          </div>
+        ) : null}
       </div>
-    </div>
+    </Page>
   );
 }

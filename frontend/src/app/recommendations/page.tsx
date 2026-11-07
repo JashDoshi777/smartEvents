@@ -1,211 +1,197 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
-import {
-  Sparkles, ChevronDown, TrendingUp, TrendingDown, Minus,
-  CheckCircle2, AlertTriangle, XCircle, Info,
-} from 'lucide-react';
-import { Topbar } from '@/components/layout/Topbar';
+import { Sparkles, TrendingUp, TrendingDown, Minus, CheckCircle2, AlertTriangle, XCircle, Info, AlertCircle } from 'lucide-react';
+import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
-import { getPortfolio, getCities, getRecommendedEntities, getSignRecommendation } from '@/lib/api';
+import { ChipRow } from '@/components/ui/Controls';
+import { EmptyState, ErrorState } from '@/components/ui/States';
+import { Skeleton } from '@/components/ui/Skeleton';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { useMarketScope } from '@/components/providers/MarketScopeProvider';
+import { EntityPicker } from '@/components/intel/EntityPicker';
+import { ScoreRing } from '@/components/intel/ScoreRing';
+import { initials, scoreColor, useScopedPortfolio } from '@/components/intel/entity-utils';
+import { getCities, getRankedRecommendations, getSignVerdict, SignVerdictResponse } from '@/lib/api';
+import { inr, num } from '@/lib/format';
 import styles from './page.module.css';
 
-function TrendIcon({ direction }: { direction?: string }) {
-  if (direction === 'rising') return <TrendingUp size={14} color="var(--positive)" />;
-  if (direction === 'falling') return <TrendingDown size={14} color="var(--negative)" />;
-  return <Minus size={14} color="var(--text-tertiary)" />;
-}
+const CATEGORIES = [
+  { value: '', label: 'All' }, { value: 'music', label: 'Music' }, { value: 'comedy', label: 'Comedy' },
+  { value: 'sports', label: 'Sports' }, { value: 'theatre', label: 'Theatre' },
+];
 
-const VERDICT_STYLE: Record<string, { color: string; icon: any; label: string }> = {
-  sign: { color: 'var(--positive)', icon: CheckCircle2, label: 'Sign' },
-  consider: { color: 'var(--warning)', icon: AlertTriangle, label: 'Consider' },
-  pass: { color: 'var(--negative)', icon: XCircle, label: 'Pass' },
-  insufficient_data: { color: 'var(--text-tertiary)', icon: Info, label: 'Insufficient data' },
+const VERDICT: Record<string, { color: string; Icon: typeof Info; label: string }> = {
+  sign: { color: 'var(--positive)', Icon: CheckCircle2, label: 'Sign' },
+  consider: { color: 'var(--text-primary)', Icon: AlertTriangle, label: 'Consider' },
+  pass: { color: 'var(--negative)', Icon: XCircle, label: 'Pass' },
+  insufficient_data: { color: 'var(--text-tertiary)', Icon: Info, label: 'Insufficient data' },
 };
 
-export default function RecommendationsPage() {
+function Trend({ d }: { d?: string }) {
+  if (d === 'rising') return <TrendingUp size={14} color="var(--positive)" aria-label="Rising" />;
+  if (d === 'falling') return <TrendingDown size={14} color="var(--negative)" aria-label="Falling" />;
+  return <Minus size={14} color="var(--text-tertiary)" aria-label="Stable" />;
+}
+
+function Content() {
+  const params = useSearchParams();
+  const { isIndia, scope } = useMarketScope();
+  const { user } = useAuth();
+  const canSign = !user || user.role !== 'viewer';
   const [category, setCategory] = useState('');
   const [city, setCity] = useState('');
 
-  const { data: citiesData } = useSWR('cities/recommend', () => getCities(), { shouldRetryOnError: false });
-  const cities = citiesData?.cities ?? [];
+  const cities = useSWR('cities/all', () => getCities());
+  const cityList = cities.data?.cities ?? [];
+  const rec = useSWR(['recommend', scope, category, city], () => getRankedRecommendations({ category, city, isInternational: !isIndia, limit: 20 }), { keepPreviousData: true });
+  const items = rec.data?.recommendations ?? [];
+  const { scoped, all, isLoading: pLoading } = useScopedPortfolio();
 
-  const { data, isLoading } = useSWR(
-    `recommend-entities-${category}-${city}`,
-    () => getRecommendedEntities({ category: category || undefined, city: city || undefined, limit: 15 }),
-    { shouldRetryOnError: false }
-  );
-  const recommendations = data?.recommendations ?? [];
-
-  // ── Sign evaluator ────────────────────────────────────────────────────────
-  const { data: portfolio } = useSWR('portfolio/recommend', () => getPortfolio(), { shouldRetryOnError: false });
-  const entities = portfolio?.portfolio ?? [];
-
-  const [signEntityId, setSignEntityId] = useState('');
+  // Sign evaluator
+  const formRef = useRef<HTMLDivElement>(null);
+  const [entityId, setEntityId] = useState('');
   const [signCity, setSignCity] = useState('');
   const [capacity, setCapacity] = useState('5000');
   const [price, setPrice] = useState('2500');
-  const [signResult, setSignResult] = useState<any>(null);
-  const [signLoading, setSignLoading] = useState(false);
-  const [signError, setSignError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<SignVerdictResponse | null>(null);
 
-  async function handleSign(e: React.FormEvent) {
+  const deep = params.get('entity');
+  useEffect(() => { if (deep) setEntityId(deep); }, [deep]);
+  useEffect(() => { if (!signCity && cityList.length) setSignCity(cityList[0].name); }, [cityList, signCity]);
+
+  // Picker offers scoped entities, plus whichever is selected (deep link / row click) even if out of scope.
+  const pickerList = useMemo(() => {
+    const extra = all.find(e => e.id === entityId);
+    return extra && !scoped.some(e => e.id === entityId) ? [extra, ...scoped] : scoped;
+  }, [scoped, all, entityId]);
+
+  const cap = Number(capacity), pr = Number(price);
+  const valid = !!entityId && !!signCity && cap >= 100 && cap <= 200000 && pr >= 100 && pr <= 100000;
+
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!signEntityId || !signCity || !capacity || !price) return;
-    setSignLoading(true);
-    setSignError(null);
+    if (!valid) return;
+    setBusy(true); setError(null);
     try {
-      const res = await getSignRecommendation({
-        entity_id: signEntityId,
-        city: signCity,
-        venue_capacity: Number(capacity),
-        proposed_price: Number(price),
-      });
-      setSignResult(res);
-    } catch (err: any) {
-      setSignError(err.message ?? 'Failed to get a sign recommendation. Requires Executive/Analyst/Booker role.');
-    } finally {
-      setSignLoading(false);
-    }
+      setResult(await getSignVerdict({ entity_id: entityId, city: signCity, venue_capacity: cap, proposed_price: pr }));
+    } catch (err) {
+      const m = err instanceof Error ? err.message : '';
+      setResult(null);
+      setError(m.includes('403') ? 'Your role can’t request sign verdicts. This needs Executive, Analyst or Booker access.'
+        : m.includes('503') ? 'The pricing model is unavailable right now. Try again shortly.' : 'Couldn’t get a verdict. Please try again.');
+    } finally { setBusy(false); }
   }
 
-  const verdict = signResult ? (VERDICT_STYLE[signResult.verdict] ?? VERDICT_STYLE.insufficient_data) : null;
-  const VerdictIcon = verdict?.icon;
+  function selectRow(id: string) {
+    setEntityId(id); setResult(null); setError(null);
+    if (city) setSignCity(city);
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  const v = result ? VERDICT[result.verdict] ?? VERDICT.insufficient_data : null;
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-base)' }}>
-      <Topbar title="AI Recommendations" subtitle="Rules + real-signal ranking of who to book, and a sign/consider/pass verdict for a specific deal" />
-
-      <div className={styles.page}>
-        {/* Ranked candidates */}
-        <GlassCard className={styles.listCard} delay={0.04}>
-          <div className={styles.cardHead}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Sparkles size={15} color="var(--accent)" />
-              <h2 className="t-headline text-primary">Ranked Candidates</h2>
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <div className={styles.selectWrap}>
-                <select className={`input ${styles.select}`} value={category} onChange={e => setCategory(e.target.value)}>
-                  <option value="">All categories</option>
-                  <option value="music">Music</option>
-                  <option value="comedy">Comedy</option>
-                  <option value="sports">Sports</option>
-                  <option value="theatre">Theatre</option>
-                </select>
-                <ChevronDown size={13} className={styles.selectIcon} />
-              </div>
-              <div className={styles.selectWrap}>
-                <select className={`input ${styles.select}`} value={city} onChange={e => setCity(e.target.value)}>
-                  <option value="">No target city</option>
-                  {cities.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
-                </select>
-                <ChevronDown size={13} className={styles.selectIcon} />
-              </div>
-            </div>
+    <Page title="AI Recommendations" subtitle={`Who to book next in ${isIndia ? 'India' : 'global markets'}, and a sign / consider / pass call per deal`}>
+      <div className={styles.grid}>
+        <GlassCard className={styles.card} delay={0.04}>
+          <div className={styles.head}>
+            <h2 className="t-headline" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Sparkles size={16} /> Ranked candidates</h2>
+            {rec.data && <span className="t-caption text-tertiary">{num(rec.data.total_candidates)} candidates</span>}
           </div>
-          <p className="t-caption text-tertiary" style={{ marginBottom: 14 }}>{data?.methodology}</p>
+          <div className={styles.filters}>
+            <ChipRow value={category} onChange={setCategory} options={CATEGORIES} />
+            <ChipRow value={city} onChange={setCity} options={[{ value: '', label: 'Any city' }, ...cityList.map(c => ({ value: c.name, label: c.name }))]} />
+          </div>
+          <p className="t-caption text-tertiary" style={{ marginBottom: 10 }}>{rec.data?.methodology}</p>
 
-          {isLoading ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {[1, 2, 3, 4].map(i => <div key={i} className="skeleton" style={{ height: 52, borderRadius: 10 }} />)}
-            </div>
-          ) : recommendations.length === 0 ? (
-            <div className={styles.empty}>
-              <Info size={20} color="var(--text-tertiary)" strokeWidth={1.5} />
-              <p className="t-callout text-tertiary" style={{ marginTop: 10, textAlign: 'center' }}>
-                No entities with real collected metrics match these filters yet.
-              </p>
-            </div>
+          {rec.isLoading && !rec.data ? (
+            <div style={{ display: 'grid', gap: 8 }}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={56} radius={12} />)}</div>
+          ) : rec.error && !rec.data ? (
+            <ErrorState message={city ? 'Couldn’t rank for this city. Try another or clear the city filter.' : 'Couldn’t load recommendations.'} onRetry={() => rec.mutate()} />
+          ) : items.length === 0 ? (
+            <EmptyState title="No candidates match" message={`No ${isIndia ? 'Indian' : 'global'} entities with live scores fit these filters${city ? ` for ${city}` : ''}. Try widening them.`} />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {recommendations.map((r: any, i: number) => (
-                <motion.div key={r.entity_id} className={styles.recRow} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.03 }}>
-                  <span className={styles.rank}>#{r.rank}</span>
-                  <div style={{ flex: 1 }}>
-                    <p className="t-callout text-primary" style={{ fontWeight: 600 }}>{r.entity_name}</p>
-                    <p className="t-caption text-tertiary">{r.category} {r.is_international && '· International'}</p>
-                  </div>
-                  <TrendIcon direction={r.trend_direction} />
-                  {r.city_demand_score != null && (
-                    <span className="t-caption text-tertiary">city fit {r.city_demand_score}</span>
-                  )}
-                  <span className="t-callout text-primary" style={{ fontWeight: 800, minWidth: 48, textAlign: 'right' }}>
-                    {r.recommendation_score}
+            <div style={{ opacity: rec.isValidating ? 0.6 : 1, transition: 'opacity .2s' }}>
+              {items.map((r, i) => (
+                <motion.button key={r.entity_id} type="button" className={styles.row} aria-pressed={entityId === r.entity_id} onClick={() => selectRow(r.entity_id)}
+                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} whileTap={{ scale: 0.985 }} transition={{ duration: 0.28, delay: Math.min(i, 12) * 0.025 }}>
+                  <span className={`${styles.rank} tnum`}>{r.rank}</span>
+                  <span className={styles.av}>{initials(r.entity_name)}</span>
+                  <span className={styles.main}>
+                    <b>{r.entity_name}</b>
+                    <span className="t-caption text-tertiary">{r.category ?? '—'}{r.city_demand_score != null ? ` · ${city} fit ${Math.round(r.city_demand_score)}` : ''}</span>
                   </span>
-                </motion.div>
+                  <Trend d={r.trend_direction} />
+                  <span className={styles.right}>
+                    <span className="tnum" style={{ fontWeight: 700, letterSpacing: '-0.03em', color: scoreColor(r.recommendation_score) }}>{r.recommendation_score.toFixed(1)}</span>
+                    <span className={styles.bar}><i style={{ width: `${r.recommendation_score}%`, background: scoreColor(r.recommendation_score) }} /></span>
+                  </span>
+                </motion.button>
               ))}
             </div>
           )}
         </GlassCard>
 
-        {/* Sign evaluator */}
-        <GlassCard className={styles.formCard} delay={0.1}>
-          <div className={styles.cardHead}>
-            <h2 className="t-headline text-primary">Sign / Consider / Pass</h2>
-          </div>
-          <form onSubmit={handleSign} className={styles.form}>
-            <div className={styles.formGrid}>
+        <div className={styles.sticky} ref={formRef}>
+          <GlassCard className={styles.card} delay={0.1}>
+            <h2 className="t-headline" style={{ marginBottom: 4 }}>Sign / consider / pass</h2>
+            <p className="t-footnote text-tertiary" style={{ marginBottom: 16 }}>Run one booking through the fill-rate and pricing model.</p>
+            <form className={styles.form} onSubmit={submit}>
               <div className={styles.field}>
-                <label className={styles.label}>Artist / Act</label>
-                <div className={styles.selectWrap}>
-                  <select className={`input ${styles.select}`} value={signEntityId} onChange={e => setSignEntityId(e.target.value)} required>
-                    <option value="">Select...</option>
-                    {entities.map((e: any) => <option key={e.id} value={e.id}>{e.name}</option>)}
-                  </select>
-                  <ChevronDown size={13} className={styles.selectIcon} />
+                <label className={styles.label}>Artist or act</label>
+                <EntityPicker entities={pickerList} value={entityId} onChange={id => { setEntityId(id); setResult(null); }} loading={pLoading} />
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label} htmlFor="sign-city">City</label>
+                <select id="sign-city" className="input" value={signCity} onChange={e => setSignCity(e.target.value)} style={{ minHeight: 44 }}>
+                  {cityList.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className={styles.two}>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="sign-cap">Venue capacity</label>
+                  <input id="sign-cap" className="input" type="number" inputMode="numeric" min={100} max={200000} value={capacity} onChange={e => setCapacity(e.target.value)} style={{ minHeight: 44 }} />
+                </div>
+                <div className={styles.field}>
+                  <label className={styles.label} htmlFor="sign-price">Ticket price (₹)</label>
+                  <input id="sign-price" className="input" type="number" inputMode="numeric" min={100} max={100000} value={price} onChange={e => setPrice(e.target.value)} style={{ minHeight: 44 }} />
                 </div>
               </div>
-              <div className={styles.field}>
-                <label className={styles.label}>City</label>
-                <div className={styles.selectWrap}>
-                  <select className={`input ${styles.select}`} value={signCity} onChange={e => setSignCity(e.target.value)} required>
-                    <option value="">Select...</option>
-                    {cities.map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
-                  </select>
-                  <ChevronDown size={13} className={styles.selectIcon} />
-                </div>
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Venue capacity</label>
-                <input className="input" type="number" value={capacity} onChange={e => setCapacity(e.target.value)} min={100} max={100000} required />
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>Proposed price (₹)</label>
-                <input className="input" type="number" value={price} onChange={e => setPrice(e.target.value)} min={100} max={50000} required />
-              </div>
-            </div>
-            {signError && (
-              <div className={styles.errorBox}>
-                <AlertTriangle size={16} color="var(--negative)" />
-                <span className="t-callout" style={{ color: 'var(--negative)' }}>{signError}</span>
-              </div>
-            )}
-            <button type="submit" className="btn btn-primary" disabled={signLoading} style={{ alignSelf: 'flex-start' }}>
-              {signLoading ? 'Evaluating...' : 'Get Verdict'}
-            </button>
-          </form>
+              <p className="t-caption text-tertiary">{num(cap)} seats at {inr(pr)} is up to {inr(cap * pr)} gross.</p>
+              {!canSign && <div className={styles.note}><Info size={16} style={{ flexShrink: 0, marginTop: 1 }} />Sign verdicts need Analyst, Booker or Executive access. Your account is a viewer, so the form is read-only.</div>}
+              {error && <div className={styles.err} role="alert"><AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />{error}</div>}
+              <button type="submit" className="btn btn-primary" disabled={busy || !valid || !canSign} style={{ justifyContent: 'center' }}>{busy ? 'Evaluating…' : 'Get verdict'}</button>
+            </form>
 
-          {signResult && verdict && (
-            <motion.div className={styles.verdictBox} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ borderColor: verdict.color + '50' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {VerdictIcon && <VerdictIcon size={22} color={verdict.color} />}
-                <span style={{ fontSize: '1.1rem', fontWeight: 800, color: verdict.color }}>{verdict.label}</span>
-                <span className="t-caption text-tertiary" style={{ marginLeft: 'auto' }}>
-                  {signResult.predicted_fill_rate_pct}% predicted fill · {signResult.confidence}% confidence
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
-                {signResult.reasons.map((r: string, i: number) => (
-                  <p key={i} className="t-callout text-secondary" style={{ lineHeight: 1.5 }}>· {r}</p>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </GlassCard>
+            {result && v && (
+              <motion.div className={styles.verdict} style={{ background: 'var(--fill-quaternary)' }} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} aria-live="polite">
+                <div className={styles.vTop}>
+                  <ScoreRing score={result.predicted_fill_rate_pct} size={84} />
+                  <div>
+                    <p style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '1.25rem', fontWeight: 700, color: v.color }}><v.Icon size={20} /> {v.label}</p>
+                    <p className="t-footnote text-tertiary">{Math.round(result.predicted_fill_rate_pct)}% predicted fill · {Math.round(result.confidence)}% confidence</p>
+                  </div>
+                </div>
+                <div className={styles.kv}>
+                  <div><span className="t-caption text-tertiary">Your price</span><b className="tnum">{inr(result.proposed_price)}</b></div>
+                  <div><span className="t-caption text-tertiary">Model price</span><b className="tnum">{inr(result.recommended_price)}</b></div>
+                </div>
+                <ul className={styles.reasons}>{result.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
+              </motion.div>
+            )}
+          </GlassCard>
+        </div>
       </div>
-    </div>
+    </Page>
   );
+}
+
+export default function RecommendationsPage() {
+  return <Suspense fallback={null}><Content /></Suspense>;
 }
