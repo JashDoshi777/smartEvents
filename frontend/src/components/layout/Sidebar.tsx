@@ -4,126 +4,119 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard, Brain, TrendingUp, MapPin, BarChart3,
-  Users, DollarSign, MessageSquare, Settings, ChevronLeft,
-  Activity, Calculator, Users2, LineChart, Star, CalendarDays, Radio, Sparkles
+  LayoutDashboard, Brain, TrendingUp, MapPin, BarChart3, Users, IndianRupee,
+  MessageSquare, Settings, ChevronLeft, Activity, Calculator, Users2, LineChart,
+  Star, CalendarDays, Radio, Sparkles, Lightbulb, X,
 } from 'lucide-react';
 import styles from './Sidebar.module.css';
 
-const NAV_ITEMS = [
-  { href: '/',             icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/intelligence', icon: Brain,           label: 'Intelligence' },
-  { href: '/trends',       icon: TrendingUp,      label: 'Trend Radar' },
-  { href: '/markets',      icon: MapPin,           label: 'Markets' },
-  { href: '/executive',    icon: BarChart3,        label: 'Executive' },
-  { href: '/competitors',  icon: Users,            label: 'Competitors' },
-  { href: '/listening',    icon: Radio,            label: 'Listening' },
-  { href: '/recommendations', icon: Sparkles,      label: 'Recommendations' },
-  { href: '/pricing',      icon: DollarSign,       label: 'Pricing' },
-  { href: '/events',       icon: Activity,         label: 'Events' },
-  { href: '/events/model', icon: Calculator,       label: 'Deal Modeler' },
-  { href: '/events/pairing', icon: Users2,          label: 'Artist Pairing' },
-  { href: '/intelligence/forecast', icon: LineChart, label: 'Demand Forecast' },
-  { href: '/watchlist',    icon: Star,             label: 'Watchlist' },
-  { href: '/venues/calendar', icon: CalendarDays,  label: 'Venue Calendar' },
-  { href: '/psychology',   icon: Brain,            label: 'Psychology' },
-  { href: '/copilot',      icon: MessageSquare,    label: 'AI Copilot' },
-  { href: '/settings',     icon: Settings,         label: 'Settings' },
+const GROUPS = [
+  { title: 'Overview', items: [
+    { href: '/',          icon: LayoutDashboard, label: 'Dashboard' },
+    { href: '/executive', icon: BarChart3,       label: 'Executive' },
+    { href: '/copilot',   icon: MessageSquare,   label: 'AI Copilot' },
+  ]},
+  { title: 'Discover', items: [
+    { href: '/intelligence',    icon: Brain,     label: 'Intelligence' },
+    { href: '/trends',          icon: TrendingUp, label: 'Trend Radar' },
+    { href: '/recommendations', icon: Sparkles,  label: 'Recommendations' },
+    { href: '/listening',       icon: Radio,     label: 'Social Listening' },
+    { href: '/psychology',      icon: Lightbulb, label: 'Demand Psychology' },
+  ]},
+  { title: 'Markets', items: [
+    { href: '/markets',          icon: MapPin,       label: 'City Markets' },
+    { href: '/competitors',      icon: Users,        label: 'Competitors' },
+    { href: '/venues/calendar',  icon: CalendarDays, label: 'Venue Calendar' },
+  ]},
+  { title: 'Plan & Price', items: [
+    { href: '/pricing',               icon: IndianRupee, label: 'Pricing' },
+    { href: '/events',                icon: Activity,    label: 'Fill-rate Monitor' },
+    { href: '/events/model',          icon: Calculator,  label: 'Deal Modeler' },
+    { href: '/events/pairing',        icon: Users2,      label: 'Artist Pairing' },
+    { href: '/intelligence/forecast', icon: LineChart,   label: 'Demand Forecast' },
+  ]},
+  { title: 'Workspace', items: [
+    { href: '/watchlist', icon: Star,     label: 'Watchlist' },
+    { href: '/settings',  icon: Settings, label: 'Settings' },
+  ]},
 ];
+
+const ALL = GROUPS.flatMap(g => g.items);
 
 interface SidebarProps {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 }
 
-export function Sidebar({ collapsed, onCollapsedChange }: SidebarProps) {
+export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
+  // Highlight only the most specific match (/events/model beats /events).
+  const best = ALL
+    .filter(i => pathname === i.href || (i.href !== '/' && pathname.startsWith(i.href)))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
 
   return (
-    <motion.aside
-      className={styles.sidebar}
-      animate={{ width: collapsed ? 72 : 240 }}
-      transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
-    >
-      {/* Logo */}
-      <div className={styles.logo}>
-        <div className={styles.logoMark}>
-          <span>L</span>
-        </div>
-        <AnimatePresence>
+    <>
+      <AnimatePresence>
+        {mobileOpen && (
+          <motion.div className={styles.scrim} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onMobileClose} />
+        )}
+      </AnimatePresence>
+
+      <aside
+        className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''} ${mobileOpen ? styles.mobileOpen : ''}`}
+        aria-label="Primary navigation"
+      >
+        <div className={styles.logo}>
+          <div className={styles.logoMark}><span>L</span></div>
           {!collapsed && (
-            <motion.div
-              className={styles.logoText}
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -8 }}
-              transition={{ duration: 0.2 }}
-            >
+            <div className={styles.logoText}>
               <span className={styles.logoName}>LiveIQ</span>
               <span className={styles.logoSub}>by District</span>
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+          <button className={styles.closeMobile} onClick={onMobileClose} aria-label="Close menu"><X size={18} /></button>
+        </div>
 
-      <div className={styles.divider} />
-
-      {/* Nav */}
-      <nav className={styles.nav}>
-        {(() => {
-          // Pick the single longest matching href so nested routes (e.g.
-          // /events/model under /events) highlight only the most specific
-          // match, not both.
-          const bestMatch = NAV_ITEMS
-            .filter(item => pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href)))
-            .sort((a, b) => b.href.length - a.href.length)[0]?.href;
-
-          return NAV_ITEMS.map(({ href, icon: Icon, label }) => {
-          const active = href === bestMatch;
-          return (
-            <Link key={href} href={href} className={`${styles.navItem} ${active ? styles.active : ''}`}>
-              <div className={styles.navIcon}>
-                <Icon size={18} strokeWidth={active ? 2 : 1.6} />
-              </div>
-              <AnimatePresence>
-                {!collapsed && (
-                  <motion.span
-                    className={styles.navLabel}
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -6 }}
-                    transition={{ duration: 0.18 }}
+        <nav className={styles.nav}>
+          {GROUPS.map(g => (
+            <div key={g.title} className={styles.group}>
+              {!collapsed && <span className={styles.groupTitle}>{g.title}</span>}
+              {collapsed && <div className={styles.groupRule} />}
+              {g.items.map(({ href, icon: Icon, label }) => {
+                const active = href === best;
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={onMobileClose}
+                    className={`${styles.navItem} ${active ? styles.active : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                    title={collapsed ? label : undefined}
                   >
-                    {label}
-                  </motion.span>
-                )}
-              </AnimatePresence>
-              {active && (
-                <motion.div
-                  className={styles.activeIndicator}
-                  layoutId="sidebar-active"
-                  transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-                />
-              )}
-            </Link>
-          );
-          });
-        })()}
-      </nav>
+                    {active && (
+                      <motion.span className={styles.activePill} layoutId="nav-pill" transition={{ type: 'spring', stiffness: 420, damping: 36 }} />
+                    )}
+                    <Icon size={18} strokeWidth={active ? 2.2 : 1.7} className={styles.navIcon} />
+                    {!collapsed && <span className={styles.navLabel}>{label}</span>}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
 
-      {/* Collapse toggle */}
-      <button
-        className={styles.collapseBtn}
-        onClick={() => onCollapsedChange(!collapsed)}
-        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      >
-        <motion.div
-          animate={{ rotate: collapsed ? 180 : 0 }}
-          transition={{ duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+        <button
+          className={styles.collapseBtn}
+          onClick={() => onCollapsedChange(!collapsed)}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          <ChevronLeft size={16} />
-        </motion.div>
-      </button>
-    </motion.aside>
+          <ChevronLeft size={16} style={{ transform: collapsed ? 'rotate(180deg)' : undefined, transition: 'transform .3s var(--ease-out)' }} />
+          {!collapsed && <span>Collapse</span>}
+        </button>
+      </aside>
+    </>
   );
 }

@@ -1,4 +1,6 @@
 """Health check router."""
+import asyncio
+import time
 from fastapi import APIRouter
 from app.core.database import check_db_connection
 from app.core.mongodb import check_mongo_connection
@@ -8,13 +10,20 @@ from app.core.config import settings
 router = APIRouter()
 
 
+_HEALTH_CACHE: dict = {"at": 0.0, "value": None}
+
+
 @router.get("/health", summary="System health check")
 async def health():
-    db = await check_db_connection()
-    mongo = await check_mongo_connection()
-    redis = await check_redis_connection()
+    # Dependency pings are slow when a backing service is down (DNS / TCP
+    # timeouts), so probe them concurrently and reuse the result for 30s.
+    if _HEALTH_CACHE["value"] and time.monotonic() - _HEALTH_CACHE["at"] < 30:
+        return _HEALTH_CACHE["value"]
+    db, mongo, redis = await asyncio.gather(
+        check_db_connection(), check_mongo_connection(), check_redis_connection()
+    )
     all_healthy = db and mongo and redis
-    return {
+    result = {
         "status": "ok" if all_healthy else "degraded",
         "version": settings.APP_VERSION,
         "services": {
@@ -35,6 +44,8 @@ async def health():
             "mapbox": settings.is_api_configured("mapbox"),
         },
     }
+    _HEALTH_CACHE.update(at=time.monotonic(), value=result)
+    return result
 
 
 @router.get("/", include_in_schema=False)

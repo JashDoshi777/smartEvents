@@ -26,7 +26,10 @@ from slowapi.middleware import SlowAPIMiddleware
 import structlog
 
 from app.core.config import settings
-from app.core.database import check_db_connection
+from app.core.database import check_db_connection, AsyncSessionLocal
+from app.core.response_cache import ResponseCacheMiddleware, warm_cache
+import asyncio
+from sqlalchemy import text, select
 from app.core.mongodb import check_mongo_connection, close_mongo_connection
 from app.core.redis_client import check_redis_connection, close_redis_connection
 
@@ -79,6 +82,46 @@ limiter = Limiter(
 )
 
 
+WARM_PATHS = [
+    "/dashboard/summary", "/dashboard/alerts", "/executive/kpis", "/executive/portfolio",
+    "/cities/", "/cities/top", "/cities/gaps", "/trends/breakout", "/trends/viral",
+    "/trends/regional", "/competitors/intelligence", "/competitors/gaps",
+    "/competitors/activity-feed", "/recommend/entities", "/pricing/benchmarks",
+    "/social/crisis-alerts", "/copilot/models",
+]
+
+
+async def _db_keepalive():
+    """Ping every 60s so pooled Neon connections never go cold (the pool runs
+    without pre-ping to avoid a round-trip on every checkout)."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            async with AsyncSessionLocal() as s:
+                await s.execute(text("SELECT 1"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("db keepalive failed", error=str(exc))
+
+
+async def _prewarm(app: FastAPI):
+    """Mint a short-lived token for any active user and replay the hot GETs."""
+    try:
+        from app.models.user import User
+        from app.services.auth_service import create_access_token
+        async with AsyncSessionLocal() as s:
+            user = (await s.execute(select(User).where(User.is_active.is_(True)).limit(1))).scalar_one_or_none()
+        if user is None:
+            return
+        await warm_cache(app, create_access_token(user.id, user.role), WARM_PATHS)
+        logger.info("Response cache warmed", paths=len(WARM_PATHS))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("cache prewarm failed", error=str(exc))
+
+
 # ─── Lifespan (startup / shutdown) ────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -86,9 +129,9 @@ async def lifespan(app: FastAPI):
     logger.info("LiveIQ API starting up", version=settings.APP_VERSION)
 
     # Verify all connections on startup
-    db_ok = await check_db_connection()
-    mongo_ok = await check_mongo_connection()
-    redis_ok = await check_redis_connection()
+    db_ok, mongo_ok, redis_ok = await asyncio.gather(
+        check_db_connection(), check_mongo_connection(), check_redis_connection()
+    )
 
     if not db_ok:
         logger.warning("PostgreSQL not reachable at startup")
@@ -105,7 +148,17 @@ async def lifespan(app: FastAPI):
 
     logger.info("Startup complete")
 
+    # Background tasks: keep the DB pool warm and pre-fill the response cache
+    # so the first user after a restart gets instant pages.
+    bg_tasks = [
+        asyncio.create_task(_db_keepalive()),
+        asyncio.create_task(_prewarm(app)),
+    ]
+
     yield  # App runs here
+
+    for t in bg_tasks:
+        t.cancel()
 
     # Shutdown: close all connections gracefully
     logger.info("Shutting down LiveIQ API...")
@@ -133,6 +186,7 @@ def create_app() -> FastAPI:
     # individually decorated with @limiter.limit(...), and default_limits
     # would silently do nothing.
     app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(ResponseCacheMiddleware)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(
         CORSMiddleware,

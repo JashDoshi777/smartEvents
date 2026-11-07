@@ -1,159 +1,61 @@
 .sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  height: 100vh;
-  background: var(--glass-fill);
-  border-right: 1px solid var(--glass-border);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  display: flex;
-  flex-direction: column;
-  padding: 20px 12px;
-  z-index: 100;
-  overflow: hidden;
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
+  width: var(--sidebar-width);
+  display: flex; flex-direction: column;
+  padding: 14px 10px 12px;
+  background: var(--glass-fill-strong);
+  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border-right: .5px solid var(--divider);
+  transition: width var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
 }
+.collapsed { width: var(--sidebar-collapsed); }
 
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 8px 16px;
-  min-height: 52px;
-}
-
+.logo { display: flex; align-items: center; gap: 11px; padding: 4px 8px 14px; }
 .logoMark {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  box-shadow: var(--accent-glow);
+  width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+  background: linear-gradient(145deg, #409cff, #0a60ff);
+  display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 1rem;
+  box-shadow: 0 4px 14px rgba(10,132,255,.4), inset 0 1px 0 rgba(255,255,255,.35);
 }
+.logoText { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.logoName { font-weight: 700; font-size: 1rem; letter-spacing: -.02em; }
+.logoSub { font-size: .6875rem; color: var(--text-tertiary); letter-spacing: .02em; }
+.closeMobile { display: none; margin-left: auto; width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--fill-tertiary); color: var(--text-secondary); cursor: pointer; place-items: center; }
 
-.logoMark span {
-  color: #fff;
-  font-size: 0.875rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-}
-
-.logoText {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.logoName {
-  font-size: 0.9375rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
-}
-
-.logoSub {
-  font-size: 0.6875rem;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.divider {
-  height: 1px;
-  background: var(--divider);
-  margin: 0 4px 12px;
-}
-
-.nav {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-}
+.nav { flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 14px; padding: 2px 0 8px; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+.group { display: flex; flex-direction: column; gap: 2px; }
+.groupTitle { font-size: .6875rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-tertiary); padding: 0 12px 4px; }
+.groupRule { height: .5px; background: var(--divider); margin: 0 14px 4px; }
 
 .navItem {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 12px;
-  text-decoration: none;
-  color: var(--text-secondary);
-  font-size: 0.875rem;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  transition:
-    color var(--duration-fast) var(--ease-apple),
-    background var(--duration-fast) var(--ease-apple);
+  position: relative; display: flex; align-items: center; gap: 12px;
+  height: 38px; padding: 0 12px; border-radius: 10px;
+  color: var(--text-secondary); text-decoration: none; font-size: .875rem; font-weight: 500; letter-spacing: -.01em;
+  transition: color var(--duration-fast), background var(--duration-fast), transform var(--duration-fast);
 }
-
-.navItem:hover {
-  color: var(--text-primary);
-  background: var(--glass-fill-hover);
-}
-
-.navItem.active {
-  color: var(--text-primary);
-  background: var(--glass-fill-hover);
-}
-
-.navIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  flex-shrink: 0;
-}
-
-.navLabel {
-  flex: 1;
-}
-
-.activeIndicator {
-  position: absolute;
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 18px;
-  background: var(--accent);
-  border-radius: 0 3px 3px 0;
-  box-shadow: var(--accent-glow);
-}
+.collapsed .navItem { justify-content: center; padding: 0; }
+.navItem:hover { color: var(--text-primary); background: var(--fill-quaternary); }
+.navItem:active { transform: scale(.98); }
+.activePill { position: absolute; inset: 0; border-radius: 10px; background: var(--accent-dim); }
+.active { color: var(--accent); font-weight: 600; }
+.active:hover { background: transparent; }
+.navIcon { position: relative; flex-shrink: 0; }
+.navLabel { position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .collapseBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-border);
-  color: var(--text-tertiary);
-  cursor: pointer;
-  align-self: center;
-  margin-top: 8px;
-  transition:
-    background var(--duration-fast) var(--ease-apple),
-    color var(--duration-fast) var(--ease-apple);
+  display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; margin-top: 4px;
+  border: 0; border-radius: 10px; background: transparent; color: var(--text-tertiary);
+  font: 500 .8125rem var(--font-sans); cursor: pointer; transition: background var(--duration-fast), color var(--duration-fast);
 }
+.collapseBtn:hover { background: var(--fill-quaternary); color: var(--text-primary); }
 
-.collapseBtn:hover {
-  background: var(--glass-fill-hover);
-  color: var(--text-primary);
-}
+.scrim { display: none; }
 
-@media (max-width: 768px) {
-  .sidebar { width: 72px !important; }
-  .logoText, .navLabel { display: none; }
+@media (max-width: 900px) {
+  .sidebar { width: min(300px, 84vw) !important; transform: translateX(-102%); box-shadow: none; }
+  .sidebar.mobileOpen { transform: none; box-shadow: 0 0 80px rgba(0,0,0,.45); }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 99; background: rgba(0,0,0,.4); backdrop-filter: blur(4px); }
+  .closeMobile { display: grid; }
+  .collapseBtn { display: none; }
 }

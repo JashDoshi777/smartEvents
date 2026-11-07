@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.user import User, UserRole
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, invalidate_user_cache
 from app.services.auth_service import (
     hash_password, verify_password, create_access_token, create_refresh_token, decode_token,
 )
@@ -159,8 +159,13 @@ async def logout(user: User = Depends(get_current_user), db: AsyncSession = Depe
     # token already in the caller's hand still works until it naturally
     # expires (access tokens don't carry/check token_version, by design),
     # but no refresh token minted before this call can mint a new one.
-    user.token_version += 1
-    await db.commit()
+    # `user` may come from the in-memory auth cache (a detached object from
+    # another session), so mutate a fresh row bound to THIS session.
+    fresh = await db.get(User, user.id)
+    if fresh is not None:
+        fresh.token_version += 1
+        await db.commit()
+    invalidate_user_cache(user.id)
     return {"status": "logged_out"}
 
 

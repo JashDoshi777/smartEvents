@@ -32,11 +32,15 @@ class Base(DeclarativeBase):
 # PgBouncer in transaction mode does not support prepared statements.
 engine = create_async_engine(
     settings.POSTGRES_URL,
-    echo=settings.DEBUG,
-    pool_size=5,            # Keep low — Neon free tier has connection limits
-    max_overflow=10,
-    pool_pre_ping=True,     # Recycles dead connections automatically
-    pool_recycle=300,       # Recycle connections every 5 minutes
+    echo=False,             # SQL echo floods logs and slows every request
+    pool_size=8,
+    max_overflow=12,
+    # pre_ping costs one full network round-trip (~200ms to Neon) on EVERY
+    # checkout. A keepalive task (see main.py) keeps the pool warm instead,
+    # and a short recycle bounds how stale a pooled connection can get.
+    pool_pre_ping=False,
+    pool_recycle=240,
+    pool_timeout=20,
     connect_args={
         "ssl": "require",                  # SSL required by NeonDB
         "statement_cache_size": 0,         # Required for PgBouncer / Neon pooler

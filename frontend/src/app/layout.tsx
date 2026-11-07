@@ -4,6 +4,9 @@ import './globals.css';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
 import { AuthProvider } from '@/components/providers/AuthProvider';
 import { AppShell } from '@/components/layout/AppShell';
+import { SWRProvider } from '@/lib/swr';
+import { MarketScopeProvider } from '@/components/providers/MarketScopeProvider';
+import { ToastProvider } from '@/components/ui/Toast';
 
 // Self-hosted via next/font — no runtime request to Google, no flash of
 // unstyled text. This is the FALLBACK face: real Apple devices render
@@ -16,7 +19,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: 'LiveIQ — District Intelligence Platform',
+  title: 'LiveIQ — District Intelligence',
   description: 'Real-time intelligence for District by Zomato — artist scoring, city demand, venue selection, and pricing optimization.',
 };
 
@@ -43,16 +46,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <AuthProvider>
-            <AppShell>{children}</AppShell>
+            <SWRProvider>
+              <MarketScopeProvider>
+                <ToastProvider>
+                  <AppShell>{children}</AppShell>
+                </ToastProvider>
+              </MarketScopeProvider>
+            </SWRProvider>
           </AuthProvider>
         </ThemeProvider>
-        <style>{`
-          #main-content {
-            min-height: 100vh;
-            padding-top: 60px;
-            transition: margin-left 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-          }
-        `}</style>
       </body>
     </html>
   );

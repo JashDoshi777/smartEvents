@@ -2,14 +2,17 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Sun, Moon, Search, LogOut, Music2, Film, Trophy, Mic2 } from 'lucide-react';
+import { Sun, Moon, Search, LogOut, Music2, Film, Trophy, Mic2, Menu } from 'lucide-react';
+import { useMarketScope } from '@/components/providers/MarketScopeProvider';
+import { Segmented } from '@/components/ui/Controls';
+import { useShell } from './shell-context';
 import { useTheme } from '@/components/providers/ThemeProvider';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { searchEntities, EntitySearchResult } from '@/lib/api';
 import { NotificationBell } from './NotificationBell';
 import styles from './Topbar.module.css';
 
-const TYPE_ICON: Record<string, any> = {
+const TYPE_ICON: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
   artist: Music2, movie: Film, sports_team: Trophy, comedian: Mic2,
 };
 
@@ -158,15 +161,24 @@ function UserMenu() {
 
 export function Topbar({ title, subtitle }: TopbarProps) {
   const { theme, toggle } = useTheme();
+  const { scope, setScope } = useMarketScope();
+  const { openMenu } = useShell();
 
   return (
     <header className={styles.topbar}>
       <div className={styles.left}>
-        <h1 className={styles.title}>{title}</h1>
-        {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+        <button className={styles.menuBtn} onClick={openMenu} aria-label="Open menu"><Menu size={18} /></button>
+        <div className={styles.titles}>
+          <h1 className={styles.title}>{title}</h1>
+          {subtitle && <p className={styles.subtitle}>{subtitle}</p>}
+        </div>
       </div>
 
       <div className={styles.actions}>
+        <div className={styles.scopeWrap}>
+          <Segmented ariaLabel="Market scope" value={scope} onChange={setScope}
+            options={[{ value: 'india', label: 'India' }, { value: 'global', label: 'Global' }]} />
+        </div>
         <GlobalSearch />
 
         {/* Notifications */}

@@ -1,0 +1,14 @@
+import { chromium } from '@playwright/test';
+import fs from 'fs';
+const [,, SC, path, out, theme='dark', w='1440', h='900'] = process.argv;
+const tok = JSON.parse(fs.readFileSync(`${SC}/tok.json`)).tokens;
+const b = await chromium.launch();
+const ctx = await b.newContext({ viewport: { width: +w, height: +h }, colorScheme: theme });
+await ctx.addInitScript(([t, th]) => { localStorage.setItem('liveiq_access_token', t.access_token); localStorage.setItem('liveiq_refresh_token', t.refresh_token); localStorage.setItem('liveiq-theme', th); }, [tok, theme]);
+const page = await ctx.newPage();
+const errs = []; page.on('pageerror', e => errs.push(e.message.slice(0, 120))); page.on('console', m => { if (m.type()==='error') errs.push(m.text().slice(0,120)); });
+await page.goto('http://localhost:3000' + path, { waitUntil: 'networkidle' }).catch(()=>{});
+await page.waitForTimeout(1800);
+await page.screenshot({ path: out, fullPage: false });
+console.log('errors:', JSON.stringify(errs));
+await b.close();

@@ -6,13 +6,14 @@ Real DB-backed trend intelligence.
 from typing import Optional
 import structlog
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.api.deps import get_current_user
+from app.services.latest_metric import latest_metric
 from app.models.user import User
 
 router = APIRouter()
@@ -24,6 +25,7 @@ async def get_breakouts(
     category: Optional[str] = Query(None, description="Filter by: Bollywood, Punjabi Pop, K-Pop..."),
     entity_type: Optional[str] = Query(None, description="Filter by: artist, comedian, sports_team..."),
     is_international: Optional[bool] = Query(None),
+    market: str = Query("all", pattern="^(all|india|global)$"),
     limit: int = Query(10, le=50),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -35,10 +37,15 @@ async def get_breakouts(
     """
     # Get latest metric per entity using a simple join ordered by time desc
     # (Simpler than correlated subquery — works with both NeonDB and test mocks)
+    EntityMetric = latest_metric()  # one row per entity (newest snapshot)
     stmt = (
         select(Entity, EntityMetric)
         .join(EntityMetric, Entity.id == EntityMetric.entity_id)
     )
+    if market == "india":
+        stmt = stmt.where(Entity.primary_market == "India")
+    elif market == "global":
+        stmt = stmt.where(or_(Entity.primary_market != "India", Entity.primary_market.is_(None)))
     if category:
         stmt = stmt.where(Entity.category.ilike(f"%{category}%"))
     if entity_type:
@@ -46,7 +53,7 @@ async def get_breakouts(
     if is_international is not None:
         stmt = stmt.where(Entity.is_international == is_international)
 
-    stmt = stmt.order_by(EntityMetric.time.desc(), EntityMetric.composite_score.desc()).limit(limit)
+    stmt = stmt.order_by(EntityMetric.composite_score.desc().nullslast()).limit(limit)
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -110,6 +117,7 @@ async def get_breakouts(
 
 @router.get("/viral", summary="Entities with highest news + social spike")
 async def get_viral_signals(
+    market: str = Query("all", pattern="^(all|india|global)$"),
     limit: int = Query(10, le=30),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -118,13 +126,17 @@ async def get_viral_signals(
     Returns entities with highest news mention spike in the last 7 days.
     Sprint 4: will add Instagram Reels + YouTube Shorts view velocity.
     """
+    EntityMetric = latest_metric()  # one row per entity (newest snapshot)
     stmt = (
         select(Entity, EntityMetric)
         .join(EntityMetric, Entity.id == EntityMetric.entity_id)
         .where(EntityMetric.news_mentions_7d.isnot(None))
-        .order_by(desc(EntityMetric.news_mentions_7d))
-        .limit(limit)
     )
+    if market == "india":
+        stmt = stmt.where(Entity.primary_market == "India")
+    elif market == "global":
+        stmt = stmt.where(or_(Entity.primary_market != "India", Entity.primary_market.is_(None)))
+    stmt = stmt.order_by(desc(EntityMetric.news_mentions_7d)).limit(limit)
     result = await db.execute(stmt)
     rows = result.all()
 

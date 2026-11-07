@@ -32,7 +32,8 @@
   top: calc(100% + 10px);
   right: 0;
   width: 360px;
-  max-height: 480px;
+  max-width: calc(100vw - 24px);
+  max-height: min(480px, 70vh);
   background: var(--glass-fill);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);

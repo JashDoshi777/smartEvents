@@ -1,33 +1,37 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { Sidebar } from './Sidebar';
+import { ShellContext } from './shell-context';
 
-const EXPANDED_WIDTH = 240;
-const COLLAPSED_WIDTH = 72;
-
-// Auth pages render full-bleed with no sidebar/topbar chrome — there's
-// nothing to navigate to until the user is logged in.
 const CHROMELESS_ROUTES = ['/login', '/register'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
+  useEffect(() => {
+    try { if (localStorage.getItem('liveiq-sidebar') === '1') setCollapsed(true); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
+
+  const setCollapsedPersist = (v: boolean) => {
+    setCollapsed(v);
+    try { localStorage.setItem('liveiq-sidebar', v ? '1' : '0'); } catch { /* ignore */ }
+  };
+
   if (CHROMELESS_ROUTES.includes(pathname)) {
-    return <main id="main-content" style={{ marginLeft: 0, paddingTop: 0 }}>{children}</main>;
+    return <main id="main-content" style={{ marginLeft: 0 }}>{children}</main>;
   }
 
   return (
-    <>
-      <Sidebar collapsed={collapsed} onCollapsedChange={setCollapsed} />
-      <main
-        id="main-content"
-        style={{ marginLeft: collapsed ? COLLAPSED_WIDTH : EXPANDED_WIDTH }}
-      >
+    <ShellContext.Provider value={{ openMenu: () => setMobileOpen(true) }}>
+      <Sidebar collapsed={collapsed} onCollapsedChange={setCollapsedPersist} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
+      <main id="main-content" style={{ marginLeft: collapsed ? 'var(--sidebar-collapsed)' : 'var(--sidebar-width)' }}>
         {children}
       </main>
-    </>
+    </ShellContext.Provider>
   );
 }

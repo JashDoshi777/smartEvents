@@ -4,6 +4,7 @@ FastAPI dependencies for extracting and validating the current user from
 a Bearer JWT, plus role-based route guards.
 """
 
+import time
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -16,6 +17,18 @@ from app.models.user import User, UserRole
 from app.services.auth_service import decode_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# user_id -> (expires_at, User). The remote DB costs ~200ms per query, so
+# re-reading the same user row on every API call dominated latency.
+_USER_CACHE: dict[UUID, tuple[float, User]] = {}
+_USER_TTL = 60.0
+
+
+def invalidate_user_cache(user_id: UUID | None = None) -> None:
+    if user_id is None:
+        _USER_CACHE.clear()
+    else:
+        _USER_CACHE.pop(user_id, None)
 
 
 async def get_current_user(
@@ -34,8 +47,14 @@ async def get_current_user(
     except (KeyError, ValueError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token payload", headers={"WWW-Authenticate": "Bearer"})
 
+    hit = _USER_CACHE.get(user_id)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
+    if user is not None and user.is_active:
+        _USER_CACHE[user_id] = (time.monotonic() + _USER_TTL, user)
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found or deactivated", headers={"WWW-Authenticate": "Bearer"})
 

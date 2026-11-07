@@ -10,8 +10,8 @@ Endpoints:
 
 from datetime import datetime, timezone
 import structlog
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, desc, text
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, desc, text, or_, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,6 +21,7 @@ from app.models.city import City
 from app.models.event import Event
 from app.models.venue import Venue
 from app.api.deps import get_current_user
+from app.services.latest_metric import latest_metric
 from app.models.user import User
 
 router = APIRouter()
@@ -28,15 +29,28 @@ logger = structlog.get_logger()
 
 
 @router.get("/summary", summary="Full dashboard data payload")
-async def get_dashboard_summary(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def get_dashboard_summary(
+    market: str = Query("all", pattern="^(all|india|global)$", description="Scope entity data to the Indian market, the rest of the world, or both"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """
     Single endpoint that returns everything the dashboard needs.
     Frontend only calls this — no hardcoded data anywhere.
     """
     generated_at = datetime.now(timezone.utc).isoformat()
+    EntityMetric = latest_metric()  # de-duplicated: newest snapshot per entity
+
+    # Market scoping — applies to every entity-derived figure below.
+    if market == "india":
+        scope = Entity.primary_market == "India"
+    elif market == "global":
+        scope = or_(Entity.primary_market != "India", Entity.primary_market.is_(None))
+    else:
+        scope = true()
 
     # ── Hero counts ────────────────────────────────────────────────────────
-    total_entities   = await db.scalar(select(func.count(Entity.id))) or 0
+    total_entities   = await db.scalar(select(func.count(Entity.id)).where(scope)) or 0
     total_cities     = await db.scalar(select(func.count(City.id))) or 0
     active_cities    = await db.scalar(
         select(func.count(City.id)).where(City.active_on_district == True)  # noqa: E712
@@ -44,6 +58,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db), user: User =
     total_events     = await db.scalar(select(func.count(Event.id))) or 0
     entities_w_metrics = await db.scalar(
         select(func.count(func.distinct(EntityMetric.entity_id)))
+        .join(Entity, Entity.id == EntityMetric.entity_id).where(scope)
     ) or 0
 
     # ── Top trending entities (by composite score) ─────────────────────────
@@ -61,7 +76,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db), user: User =
             EntityMetric.lastfm_listeners,
         )
         .join(EntityMetric, Entity.id == EntityMetric.entity_id)
-        .where(EntityMetric.composite_score.isnot(None))
+        .where(EntityMetric.composite_score.isnot(None), scope)
         .order_by(desc(EntityMetric.composite_score))
         .limit(10)
     )
@@ -141,7 +156,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db), user: User =
     # ── Category breakdown ─────────────────────────────────────────────────
     cat_result = await db.execute(
         select(Entity.category, func.count(Entity.id).label("count"))
-        .where(Entity.category.isnot(None))
+        .where(Entity.category.isnot(None), scope)
         .group_by(Entity.category)
         .order_by(desc("count"))
         .limit(6)
@@ -154,6 +169,7 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db), user: User =
     # ── Entity type breakdown ──────────────────────────────────────────────
     type_result = await db.execute(
         select(Entity.entity_type, func.count(Entity.id).label("count"))
+        .where(scope)
         .group_by(Entity.entity_type)
         .order_by(desc("count"))
     )
@@ -165,12 +181,13 @@ async def get_dashboard_summary(db: AsyncSession = Depends(get_db), user: User =
     # ── Avg score ──────────────────────────────────────────────────────────
     avg_score = await db.scalar(
         select(func.avg(EntityMetric.composite_score))
-        .where(EntityMetric.composite_score.isnot(None))
+        .join(Entity, Entity.id == EntityMetric.entity_id)
+        .where(EntityMetric.composite_score.isnot(None), scope)
     )
 
     # ── International count ────────────────────────────────────────────────
     intl_count = await db.scalar(
-        select(func.count(Entity.id)).where(Entity.is_international == True)  # noqa: E712
+        select(func.count(Entity.id)).where(Entity.is_international == True, scope)  # noqa: E712
     ) or 0
 
     return {
@@ -203,6 +220,7 @@ async def get_dashboard_alerts(db: AsyncSession = Depends(get_db), user: User = 
     """
     alerts = []
     now = datetime.now(timezone.utc).isoformat()
+    EntityMetric = latest_metric()  # de-duplicated: newest snapshot per entity
 
     # ── Breakout alerts: high google_trend relative to composite ───────────
     breakout_result = await db.execute(
