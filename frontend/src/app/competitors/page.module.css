@@ -1,0 +1,128 @@
+.page {
+  padding: 80px 28px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.selectorCard { padding: 14px 20px; }
+
+.selectWrap { position: relative; }
+
+.select {
+  min-width: 180px;
+  appearance: none;
+  padding-right: 32px !important;
+}
+
+.selectIcon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.mainGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.platformCard { padding: 22px; }
+.gapsCard     { padding: 22px; }
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.platformList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--divider);
+}
+
+.platformRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  transition: background var(--duration-fast) var(--ease-apple);
+}
+.platformRow:hover { background: var(--glass-fill-hover); }
+
+.platDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.gapRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  transition: background var(--duration-fast) var(--ease-apple);
+}
+.gapRow:hover { background: var(--glass-fill-hover); }
+
+.gapIndicator {
+  width: 3px;
+  height: 36px;
+  background: var(--positive);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* ── Feed card ── */
+.feedCard { padding: 22px; }
+
+.feedList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feedRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px;
+  border-radius: 10px;
+  transition: background var(--duration-fast) var(--ease-apple);
+}
+.feedRow:hover { background: var(--glass-fill-hover); }
+
+.feedDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Empty state ── */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  gap: 8px;
+}
+
+@media (max-width: 860px) {
+  .mainGrid { grid-template-columns: 1fr; }
+  .page { padding: 72px 16px 32px; }
+}

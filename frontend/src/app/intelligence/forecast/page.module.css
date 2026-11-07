@@ -1,0 +1,129 @@
+.page {
+  padding: 80px 28px 48px;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.formCard { padding: 26px 28px; }
+
+.formHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.005em;
+}
+
+.selectWrap { position: relative; }
+
+.select {
+  width: 100%;
+  appearance: none;
+  padding-right: 36px !important;
+}
+
+.selectIcon {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.errorBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--negative-dim);
+  border: 1px solid rgba(255,59,48,0.25);
+  border-radius: var(--radius-md);
+  margin-top: 8px;
+}
+
+.resultWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.heroCard { padding: 26px 28px; }
+
+.heroTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.trendBadge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid;
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.chartCard { padding: 22px 26px; }
+
+.insufficientBox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 50px 20px;
+  text-align: center;
+}
+
+.noteBox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 20px;
+}
+
+@media (max-width: 900px) {
+  .formGrid { grid-template-columns: 1fr; }
+  .page { padding: 72px 16px 32px; }
+}

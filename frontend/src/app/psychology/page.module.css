@@ -1,0 +1,71 @@
+.page {
+  padding: 80px 28px 48px;
+  max-width: 1100px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.selectorCard { padding: 20px 24px; }
+.heroCard { padding: 26px 28px; }
+
+.selectWrap { position: relative; }
+
+.select {
+  width: 100%;
+  appearance: none;
+  padding-right: 36px !important;
+  min-width: 200px;
+}
+
+.selectIcon {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.factorsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .factorsGrid { grid-template-columns: 1fr; }
+}
+
+.factorCard { padding: 18px 20px; height: 100%; }
+
+.factorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.signalRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.signalChip {
+  font-size: 0.6875rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  color: var(--text-tertiary);
+  text-transform: capitalize;
+}

@@ -1,0 +1,226 @@
+.topbar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 60px;
+  left: var(--sidebar-width, 240px);
+  background: var(--glass-fill);
+  border-bottom: 1px solid var(--glass-border);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  z-index: 90;
+  transition: left 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.left {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.title {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+
+.subtitle {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  letter-spacing: -0.005em;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.searchWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 220px;
+  padding-left: 32px !important;
+  height: 36px;
+  font-size: 0.8125rem !important;
+}
+
+.searchDropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--glass-fill);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow-hover);
+  padding: 6px;
+  z-index: 200;
+}
+
+.searchResult {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-apple);
+}
+
+.searchResult:hover,
+.searchResultActive {
+  background: var(--glass-fill-hover);
+}
+
+.searchResultIcon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.searchResult span:last-child {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── Theme Toggle ── */
+.themeToggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.toggleTrack {
+  width: 44px;
+  height: 26px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--glass-border);
+  border-radius: 13px;
+  position: relative;
+  transition:
+    background var(--duration-base) var(--ease-apple),
+    border-color var(--duration-base) var(--ease-apple);
+}
+
+.toggleTrack.light {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggleThumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  transition: transform var(--duration-base) var(--ease-apple);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+
+.toggleTrack.light .toggleThumb {
+  transform: translateX(18px);
+}
+
+/* ── User Menu ── */
+.userMenuWrap {
+  position: relative;
+}
+
+.userAvatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.userDropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  width: 220px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  overflow: hidden;
+  z-index: 100;
+}
+
+.userInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.roleBadge {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.logoutBtn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--negative);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.logoutBtn:hover {
+  background: var(--negative-dim);
+}

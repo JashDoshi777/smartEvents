@@ -1,0 +1,252 @@
+.page {
+  padding: 80px 28px 48px;
+  max-width: 1100px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Form card ── */
+.formCard { padding: 26px 28px; }
+
+.formHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.005em;
+}
+
+.selectWrap {
+  position: relative;
+}
+
+.select {
+  width: 100%;
+  appearance: none;
+  padding-right: 36px !important;
+}
+
+.selectIcon {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.capacityChips,
+.filterRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filterChip {
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-apple);
+}
+.filterChip:hover { background: var(--glass-fill-hover); color: var(--text-primary); }
+
+.filterActive {
+  background: var(--accent-dim) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.errorBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--negative-dim);
+  border: 1px solid rgba(255,59,48,0.25);
+  border-radius: var(--radius-md);
+  margin-top: 8px;
+}
+
+/* ── Recommendation ── */
+.recWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.recHero { padding: 26px 28px; }
+
+.recTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.recPrice {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.priceNum {
+  font-size: 2.75rem;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.priceDiff {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.recBadge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+.recMetrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--divider);
+}
+
+.recMetricBox {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.reasoning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(10,132,255,0.15);
+  border-radius: var(--radius-md);
+}
+
+.recGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.sensitivityCard { padding: 20px 22px; }
+.tiersCard       { padding: 20px 22px; }
+
+.tierList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tierRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tierDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.tierInfo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tierBar {
+  height: 4px;
+  background: var(--divider);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tierFill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.benchCard { padding: 20px 22px; }
+
+.benchGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.benchItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+}
+
+/* ── Placeholder ── */
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 20px;
+}
+
+@media (max-width: 860px) {
+  .formGrid { grid-template-columns: 1fr; }
+  .recMetrics { grid-template-columns: repeat(2, 1fr); }
+  .recGrid { grid-template-columns: 1fr; }
+  .benchGrid { grid-template-columns: repeat(2, 1fr); }
+  .page { padding: 72px 16px 32px; }
+}

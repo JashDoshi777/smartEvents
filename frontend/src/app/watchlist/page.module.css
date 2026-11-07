@@ -1,0 +1,76 @@
+.page {
+  padding: 80px 28px 48px;
+  max-width: 1000px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+}
+
+.avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.removeBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-tertiary);
+  padding: 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.removeBtn:hover {
+  color: var(--negative);
+  background: var(--negative-dim);
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 20px;
+}
+
+@media (max-width: 700px) {
+  .page { padding: 72px 16px 32px; }
+  .grid { grid-template-columns: 1fr; }
+}
