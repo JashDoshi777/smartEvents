@@ -111,6 +111,9 @@ class Settings(BaseSettings):
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
         "extra": "ignore",  # Ignore unknown env vars — safe for dev
+        # Secrets pasted into hosting dashboards often carry a trailing newline/space
+        # (e.g. database "neondb\n" does not exist) — trim every string setting.
+        "str_strip_whitespace": True,
     }
 
     def secret_key_warnings(self) -> List[str]:
