@@ -89,8 +89,9 @@ logger = structlog.get_logger()
 WARM_PATHS = [
     "/dashboard/summary", "/dashboard/alerts", "/executive/kpis", "/executive/portfolio",
     "/cities/", "/cities/top", "/cities/gaps", "/trends/breakout", "/trends/viral",
-    "/trends/regional", "/competitors/intelligence", "/competitors/gaps",
-    "/competitors/activity-feed", "/recommend/entities", "/pricing/benchmarks",
+    # NOTE: /competitors/intelligence and /competitors/activity-feed are deliberately NOT pre-warmed:
+    # they call NewsAPI (free tier ≈ 100 requests/day), and a pre-warm on every restart burned the quota.
+    "/trends/regional", "/competitors/gaps", "/recommend/entities", "/pricing/benchmarks",
     "/social/crisis-alerts", "/copilot/models",
 ]
 
