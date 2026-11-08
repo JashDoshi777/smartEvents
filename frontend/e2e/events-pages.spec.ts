@@ -235,7 +235,7 @@ test.describe('Deal modeler (/events/model)', () => {
 
   test('sensitivity table grows with price and with fill (mocked fixture)', async ({ page }) => {
     await login(page);
-    await page.route(/:8000\/events\/model$/, r => r.fulfill({ json: { ...dealFixture, cost_model: { venue_pct: 0.1, ops_pct: 0.25 } } }));
+    await page.route(/(:8000|\/api)\/events\/model$/, r => r.fulfill({ json: { ...dealFixture, cost_model: { venue_pct: 0.1, ops_pct: 0.25 } } }));
     await page.goto('/events/model');
     await expect(page.getByRole('button', { name: 'Run simulation' })).toBeEnabled(T);
     await page.locator('#m-artist').click(); await page.getByRole('option').first().click();
@@ -253,7 +253,7 @@ test.describe('Deal modeler (/events/model)', () => {
 
   test('save scenario, restore inputs, delete; persists across reload; CSV export', async ({ page }) => {
     await login(page);
-    await page.route(/:8000\/events\/model$/, r => r.fulfill({ json: { ...dealFixture, cost_model: { venue_pct: 0.1, ops_pct: 0.25 } } }));
+    await page.route(/(:8000|\/api)\/events\/model$/, r => r.fulfill({ json: { ...dealFixture, cost_model: { venue_pct: 0.1, ops_pct: 0.25 } } }));
     await page.goto('/events/model');
     await expect(page.getByRole('button', { name: 'Run simulation' })).toBeEnabled(T);
     await page.locator('#m-artist').click(); await page.getByRole('option').first().click();
@@ -296,15 +296,15 @@ test.describe('Deal modeler (/events/model)', () => {
     await page.locator('#m-artist').click(); await page.getByRole('option').first().click();
     await page.selectOption('#m-city', 'Mumbai'); await page.fill('#m-cap', '9000'); await page.fill('#m-price', '2500');
     const alert = page.locator('[role=alert]:not(#__next-route-announcer__)');
-    await page.route(/:8000\/events\/model$/, r => r.fulfill({ status: 404, json: { detail: 'nf' } }));
+    await page.route(/(:8000|\/api)\/events\/model$/, r => r.fulfill({ status: 404, json: { detail: 'nf' } }));
     await page.getByRole('button', { name: 'Run simulation' }).click();
     await expect(alert).toContainText('could not be found');
-    await page.unroute(/:8000\/events\/model$/);
-    await page.route(/:8000\/events\/model$/, r => r.fulfill({ status: 500, json: { detail: 'x' } }));
+    await page.unroute(/(:8000|\/api)\/events\/model$/);
+    await page.route(/(:8000|\/api)\/events\/model$/, r => r.fulfill({ status: 500, json: { detail: 'x' } }));
     await page.getByRole('button', { name: 'Run simulation' }).click();
     await expect(alert).toContainText('unavailable right now');
-    await page.unroute(/:8000\/events\/model$/);
-    await page.route(/:8000\/events\/model$/, r => r.fulfill({ status: 403, json: { detail: 'x' } }));
+    await page.unroute(/(:8000|\/api)\/events\/model$/);
+    await page.route(/(:8000|\/api)\/events\/model$/, r => r.fulfill({ status: 403, json: { detail: 'x' } }));
     await page.getByRole('button', { name: 'Run simulation' }).click();
     await expect(page.getByText('Booking roles only')).toBeVisible();
   });
@@ -312,7 +312,7 @@ test.describe('Deal modeler (/events/model)', () => {
   test('mobile 390: result stacks without horizontal page scroll', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page);
-    await page.route(/:8000\/events\/model$/, r => r.fulfill({ json: { ...dealFixture, cost_model: { venue_pct: 0.1, ops_pct: 0.25 } } }));
+    await page.route(/(:8000|\/api)\/events\/model$/, r => r.fulfill({ json: { ...dealFixture, cost_model: { venue_pct: 0.1, ops_pct: 0.25 } } }));
     await page.goto('/events/model');
     await expect(page.getByRole('button', { name: 'Run simulation' })).toBeEnabled(T);
     await page.locator('#m-artist').click(); await page.getByRole('option').first().click();

@@ -9,18 +9,22 @@ let cached: { t: Tokens; at: number } | null = null;
 
 /** Fresh login with 429-aware retry (the API rate-limits /auth/login to 10/min per IP, shared by all specs). */
 export async function freshTokens(page: Page): Promise<Tokens> {
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
     const res = await page.request.post(`${API}/auth/login`, { data: { email: EMAIL, password: PASSWORD } });
-    if (res.status() === 429) { await new Promise(r => setTimeout(r, 12_000)); continue; }
+    if (res.status() === 429) {
+      const ra = Number(res.headers()['retry-after']);
+      await new Promise(r => setTimeout(r, Math.min(Number.isFinite(ra) && ra > 0 ? ra * 1000 : 12_000, 65_000)));
+      continue;
+    }
     expect(res.ok(), 'login API should succeed').toBeTruthy();
     return (await res.json()).tokens;
   }
   throw new Error('login API rate-limited');
 }
 
-/** One login per worker (re-used for 8 minutes) so a big suite never trips the login rate limit. */
+/** One login per worker (re-used for 40 min; access tokens last 60) so a big suite never trips the login rate limit. */
 export async function tokens(page: Page): Promise<Tokens> {
-  if (!cached || Date.now() - cached.at > 8 * 60_000) cached = { t: await freshTokens(page), at: Date.now() };
+  if (!cached || Date.now() - cached.at > 40 * 60_000) cached = { t: await freshTokens(page), at: Date.now() };
   return cached.t;
 }
 
