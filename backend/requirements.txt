@@ -62,10 +62,10 @@ black==24.4.2
 ruff==0.4.4
 
 # ─── ML / Data Science (Sprint 4) ───────────────────────────────────────────
-scikit-learn>=1.5.0            # IsolationForest (anomaly detection) + GBR (pricing)
-numpy>=1.26.4                  # Array ops for ML features
-scipy>=1.12.0                  # Required by scikit-learn
-joblib>=1.4.0                  # Model serialisation / persistence
+scikit-learn==1.9.1            # IsolationForest (anomaly detection) + GBR (pricing)
+numpy==2.5.4                  # Array ops for ML features
+scipy==1.18.1                  # Required by scikit-learn
+joblib==1.6.0                  # Model serialisation / persistence
 prophet>=1.3.0                 # Time-series demand forecasting (Sprint 6C)
 vaderSentiment==3.3.2           # Rule-based NLP sentiment — no training data needed (M7 social listening)
 

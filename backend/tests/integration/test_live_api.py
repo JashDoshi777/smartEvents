@@ -525,9 +525,12 @@ def test_watchlist_lifecycle_idempotent_and_isolated(anon, viewers, entity_id):
     wl = anon.get("/watchlist", headers=a["h"]).json()
     assert [e["id"] for e in wl["watchlist"]].count(entity_id) == 1 and wl["total"] == 1
     assert anon.get("/watchlist", headers=b["h"]).json()["total"] == 0          # not visible to another user
-    assert anon.delete(f"/watchlist/{entity_id}", headers=b["h"]).status_code == 404  # cannot delete another user's row
+    # Another user's row is untouched: idempotent 200 flagged already_removed, and it still exists for `a`.
+    r = anon.delete(f"/watchlist/{entity_id}", headers=b["h"])
+    assert r.status_code == 200 and r.json()["already_removed"] is True
     assert anon.delete(f"/watchlist/{entity_id}", headers=a["h"]).status_code == 200
-    assert anon.delete(f"/watchlist/{entity_id}", headers=a["h"]).status_code == 404
+    r2 = anon.delete(f"/watchlist/{entity_id}", headers=a["h"])  # second delete: idempotent
+    assert r2.status_code == 200 and r2.json()["already_removed"] is True
     assert anon.post("/watchlist/not-a-uuid", headers=a["h"]).status_code == 400
     assert anon.post(f"/watchlist/{uuid.uuid4()}", headers=a["h"]).status_code == 404
 

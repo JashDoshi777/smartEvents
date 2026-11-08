@@ -169,7 +169,10 @@ test.describe('Watchlist', () => {
     const mine = wl.watchlist.find(w => w.name === name)!;
     expect(mine).toBeTruthy();
     if (mine.composite_score != null) await expect(row).toContainText(mine.composite_score.toFixed(1));
+    // Wait for the DELETE to finish: reloading mid-request would cancel it (the row is removed optimistically).
+    const deleted = page.waitForResponse(r => r.request().method() === 'DELETE' && /\/watchlist\//.test(r.url()), { timeout: 30_000 });
     await page.getByRole('button', { name: `Remove ${name} from watchlist` }).click();
+    expect((await deleted).ok()).toBe(true);
     await expect(row).toHaveCount(0);
     await page.reload();
     await expect(page.getByText('Watchlist', { exact: true }).first()).toBeVisible();
@@ -204,7 +207,7 @@ test.describe('Auth, session and routing', () => {
     await page.getByLabel('Email').fill('qa@liveiq.dev');
     await page.getByLabel('Password', { exact: true }).fill('QaTest#2026');
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page).toHaveURL(/localhost:3000\/$/, { timeout: 30_000 });
+    await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/, { timeout: 30_000 });
   });
   test('expired access token silently refreshes (no logout)', async ({ page }) => {
     const t = await freshTokens(page); // private pair: a refresh rotates the refresh token
@@ -254,7 +257,7 @@ test.describe('Auth, session and routing', () => {
     await page.goto('/this-route-does-not-exist');
     await expect(page.getByText('We couldn’t find that page')).toBeVisible({ timeout: 20_000 });
     await page.getByRole('link', { name: 'Back to dashboard' }).click();
-    await expect(page).toHaveURL(/localhost:3000\/$/);
+    await expect(page).toHaveURL(/^https?:\/\/[^/]+\/$/);
     await page.goBack();
     await expect(page.getByText('We couldn’t find that page')).toBeVisible();
     await page.goBack();

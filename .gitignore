@@ -18,6 +18,9 @@ env/
 # ML model artifacts (large binary files)
 backend/ml_models/*.pkl
 backend/ml_models/*.joblib
+!backend/ml_models/pricing_gbr.joblib
+!backend/ml_models/fillrate_gbr.joblib
+!backend/ml_models/pricing_encoders.joblib
 backend/ml_models/*.pt
 backend/ml_models/*.h5
 

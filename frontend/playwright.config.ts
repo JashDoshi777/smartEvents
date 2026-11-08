@@ -5,7 +5,7 @@ export default defineConfig({
   testMatch: /.*\.spec\.ts/,
   timeout: 45_000,
   retries: 0,
-  workers: 2,
+  workers: 1,   // specs share one test user (watchlist, notifications): parallel workers contaminate each other
   reporter: [['list']],
   use: {
     baseURL: process.env.E2E_BASE_URL ?? 'http://localhost:3000',

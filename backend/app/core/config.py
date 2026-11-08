@@ -35,16 +35,16 @@ class Settings(BaseSettings):
     # ─── Database ──────────────────────────────────────────────
     POSTGRES_URL: str
     POSTGRES_SYNC_URL: str
-    POSTGRES_PASSWORD: str
+    POSTGRES_PASSWORD: str = ""          # only used by docker-compose; the API reads POSTGRES_URL
 
     # ─── MongoDB ───────────────────────────────────────────────
-    MONGO_URL: str
+    MONGO_URL: str = "mongodb://localhost:27017"   # optional service; app runs fine without it
     MONGO_DB_NAME: str = "liveiq"
 
     # ─── Redis ─────────────────────────────────────────────────
-    REDIS_URL: str
-    CELERY_BROKER_URL: str
-    CELERY_RESULT_BACKEND: str
+    REDIS_URL: str = "redis://localhost:6379/0"    # optional service; app runs fine without it
+    CELERY_BROKER_URL: str = "redis://localhost:6379/0"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
 
     # ─── Auth ──────────────────────────────────────────────────
     SECRET_KEY: str

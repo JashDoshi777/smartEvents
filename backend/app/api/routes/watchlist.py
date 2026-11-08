@@ -124,6 +124,6 @@ async def remove_from_watchlist(entity_id: str, user: User = Depends(get_current
         result = await s.execute(
             delete(Watchlist).where(Watchlist.user_id == user.id, Watchlist.entity_id == uid)
         )
-    if result.rowcount == 0:
-        raise HTTPException(404, "Entity is not on your watchlist")
-    return {"status": "ok", "entity_id": entity_id}
+    # Idempotent: removing something already gone (second tab/device, double click) is a success —
+    # the caller's desired end state holds. `already_removed` lets clients tell the cases apart.
+    return {"status": "ok", "entity_id": entity_id, "already_removed": result.rowcount == 0}
