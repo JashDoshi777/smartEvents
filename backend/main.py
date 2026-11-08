@@ -75,6 +75,7 @@ structlog.configure(
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
         structlog.processors.StackInfoRenderer(),
+        __import__('app.core.log_redaction', fromlist=['redact_processor']).redact_processor,
         structlog.dev.ConsoleRenderer(colors=False, exception_formatter=structlog.dev.plain_traceback),
     ],
     wrapper_class=structlog.make_filtering_bound_logger(getattr(_logging, str(settings.LOG_LEVEL).upper(), _logging.INFO)),

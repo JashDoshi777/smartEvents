@@ -38,6 +38,15 @@ SIGNALS = {
 }
 TOTAL_WEIGHT = sum(v[0] for v in SIGNALS.values())
 
+# Supplementary attention signals (free, keyless). They are blended in with the same renormalisation
+# when present but do NOT count towards data_completeness (which stays defined over the 4 core signals),
+# so entities without them score exactly as before. Spotify popularity is already 0-100;
+# Wikipedia 30-day user pageviews are log-scaled 100 (0 pts) .. 5M (100 pts).
+EXTRA_SIGNALS = {
+    "spotify_popularity": (0.10, "pct", 0, 100),
+    "wikipedia_views_30d": (0.10, "log", 100, 5_000_000),
+}
+
 
 def _num(v: Any) -> Optional[float]:
     if v is None or isinstance(v, bool):
@@ -61,15 +70,18 @@ def compute_composite(metrics: Mapping[str, Any]) -> Tuple[Optional[float], floa
     """Return (score 0-100 rounded to 2dp or None if no signal, data_completeness 0-1)."""
     score = 0.0
     weight_sum = 0.0
-    for key, (weight, kind, floor, cap) in SIGNALS.items():
+    core_weight = 0.0
+    for key, (weight, kind, floor, cap) in {**SIGNALS, **EXTRA_SIGNALS}.items():
         v = _num(metrics.get(key))
         if v is None:
             continue
         score += normalise(kind, v, floor, cap) * weight
         weight_sum += weight
+        if key in SIGNALS:
+            core_weight += weight
     if weight_sum == 0:
         return None, 0.0
-    return round(min(100.0, max(0.0, score / weight_sum)), 2), round(weight_sum / TOTAL_WEIGHT, 2)
+    return round(min(100.0, max(0.0, score / weight_sum)), 2), round(core_weight / TOTAL_WEIGHT, 2)
 
 
 def compute_composite_score(metrics: Mapping[str, Any]) -> Optional[float]:

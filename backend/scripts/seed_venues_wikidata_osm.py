@@ -88,8 +88,26 @@ def wd_venues():
     return list(out.values())
 
 
-OSM_GROUPS = [OSM_TYPES[0:2], OSM_TYPES[2:4]]  # stadium+theatre ; events_venue+conference_centre
-# (nightclub / arts_centre selectors time out on the public Overpass instance for metro-sized areas — skipped)
+OSM_GROUPS = [OSM_TYPES[0:2], OSM_TYPES[2:4], OSM_TYPES[4:6]]  # stadium+theatre ; events_venue+conference ; arts_centre+nightclub
+OVERPASS_ENDPOINTS = ["https://overpass.kumi.systems/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+                      "https://overpass-api.de/api/interpreter"]
+
+
+def overpass_query(q):
+    """Try each public endpoint politely; never accept a timed-out/partial answer."""
+    for ep in OVERPASS_ENDPOINTS:
+        r = _wd.get(ep, {"data": q}, min_gap=1.5, timeout=100, tries=1)
+        if r is None:
+            continue
+        try:
+            j = r.json()
+        except ValueError:
+            continue
+        rem = j.get("remark") or ""
+        if "timed out" in rem or "error" in rem.lower():
+            continue
+        return j["elements"]
+    raise RuntimeError("all overpass endpoints failed")
 
 
 def osm_venues(cities, cached_only=False):
@@ -97,20 +115,11 @@ def osm_venues(cities, cached_only=False):
     for cname, lat, lng in cities:
         for gi, grp in enumerate(OSM_GROUPS):
             parts = "".join(f'nwr[{sel}][name](around:{RADIUS_KM * 1000},{lat},{lng});' for sel, _, _ in grp)
-            q = f"[out:json][timeout:90];({parts});out center tags 400;"
+            q = f"[out:json][timeout:60];({parts});out center tags 400;"
 
             def run(q=q):
-                r = _wd.get("https://overpass-api.de/api/interpreter", {"data": q}, min_gap=2.0, timeout=120, tries=2)
-                if r is None:
-                    raise RuntimeError("overpass failed")
-                try:
-                    j = r.json()
-                except ValueError:
-                    raise RuntimeError("overpass non-json (server busy)")
-                if "timed out" in (j.get("remark") or "") or "error" in (j.get("remark") or "").lower():
-                    raise RuntimeError("overpass remark: " + j["remark"][:80])  # never cache a partial/empty answer
-                return j["elements"]
-            key = "osm2_" + _wd.norm(cname).replace(" ", "_") + f"_{gi}"
+                return overpass_query(q)
+            key = "osm3_" + _wd.norm(cname).replace(" ", "_") + f"_{gi}"
             try:
                 if cached_only and not os.path.exists(_wd._cache_path(key)):
                     continue

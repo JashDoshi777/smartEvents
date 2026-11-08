@@ -14,7 +14,23 @@ from typing import Any, Dict, Optional
 import httpx
 import structlog
 
+from app.core.log_redaction import redact, redact_processor
+
+# Scripts/workers that never go through main.py still get redaction by default.
+if not structlog.is_configured():
+    structlog.configure(processors=[
+        structlog.contextvars.merge_contextvars, structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"), redact_processor,
+        structlog.dev.ConsoleRenderer(colors=False)])
+
 logger = structlog.get_logger()
+
+
+def _clean(exc: Exception) -> Exception:
+    """Re-create an httpx error with the query-string secrets scrubbed from its message."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return httpx.HTTPStatusError(redact(str(exc)), request=exc.request, response=exc.response)
+    return exc
 
 
 class CircuitBreaker:
@@ -164,7 +180,7 @@ class BaseAPIClient:
                             status=status,
                             path=path,
                         )
-                        raise
+                        raise _clean(e) from None
                     else:
                         # 5xx — retryable
                         last_exc = e
@@ -182,7 +198,7 @@ class BaseAPIClient:
                         path=path,
                         attempt=attempt,
                         wait_seconds=wait,
-                        error=str(last_exc),
+                        error=redact(str(last_exc)),
                     )
                     await asyncio.sleep(wait)
 
@@ -194,10 +210,10 @@ class BaseAPIClient:
                 method=method,
                 path=path,
                 attempts=self.MAX_RETRIES,
-                error=str(last_exc),
+                error=redact(str(last_exc)),
             )
             if last_exc is not None:
-                raise last_exc
+                raise _clean(last_exc) from None
             raise RuntimeError(
                 f"{self.__class__.__name__}: all {self.MAX_RETRIES} retries exhausted "
                 f"for {method} {path} with no captured exception"

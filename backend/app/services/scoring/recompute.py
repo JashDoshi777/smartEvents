@@ -20,13 +20,14 @@ async def main(apply: bool) -> None:
     async with AsyncSessionLocal() as s:
         rows = (await s.execute(text(
             "select entity_id, time, lastfm_listeners, youtube_subscribers, google_trend_score, "
-            "news_mentions_7d, composite_score from entity_metrics "
+            "news_mentions_7d, composite_score, spotify_popularity, wikipedia_views_30d from entity_metrics "
             "where collection_source = 'entity_metrics_worker'"
         ))).all()
         ups = []
-        for e, t, a, b, c, d, old in rows:
+        for e, t, a, b, c, d, old, sp, wk in rows:
             new, _ = compute_composite(dict(lastfm_listeners=a, youtube_subscribers=b,
-                                            google_trend_score=c, news_mentions_7d=d))
+                                            google_trend_score=c, news_mentions_7d=d,
+                                            spotify_popularity=sp, wikipedia_views_30d=wk))
             if (new is None) != (old is None) or (new is not None and abs(new - old) > 0.005):
                 ups.append({"e": e, "t": t, "n": new})
         print(f"{len(rows)} rows, {len(ups)} need re-scoring")

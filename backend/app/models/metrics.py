@@ -9,7 +9,7 @@ from sqlalchemy import (
     Column, Float, Integer, BigInteger, ForeignKey,
     String, Index, PrimaryKeyConstraint
 )
-from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP
+from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP, JSONB
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
@@ -79,6 +79,11 @@ class EntityMetric(Base):
     demand_score = Column(Float)                    # 0-100, booking demand signal
     risk_score = Column(Float)                      # 0-100, booking risk (lower = safer)
     breakout_probability = Column(Float)            # 0-1, ML-predicted breakout chance
+
+    # ─── Free attention signals (Wikimedia pageviews; per-signal source/date in signal_provenance) ───
+    wikipedia_views_30d = Column(BigInteger)        # en+hi Wikipedia user pageviews, trailing 30 days
+    wikipedia_views_7d = Column(BigInteger)
+    signal_provenance = Column(JSONB)               # {signal: {source, retrieved, as_of, id}}
 
     # ─── Metadata ──────────────────────────────────────────────
     data_completeness = Column(Float)               # 0-1, how many signals were available

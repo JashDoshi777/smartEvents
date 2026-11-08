@@ -221,3 +221,22 @@ async def get_crisis_alerts(
         "market": market,
         "methodology": "Negative-sentiment share in the last 24h vs the prior 7 days, per entity — flagged at >=20 percentage point increase with >=3 posts in the last 24h.",
     }
+
+
+@router.get("/sampled", summary="Entities that actually have social data (most posts first)")
+async def get_sampled_entities(
+    market: Market = "all",
+    limit: int = Query(12, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """One grouped query replacing N per-entity sentiment probes from the client."""
+    rows = (await db.execute(
+        select(Entity.id, Entity.name, func.count(SocialPost.id).label("n"))
+        .join(SocialPost, SocialPost.entity_id == Entity.id)
+        .where(market_clause(market), Entity.status == "active")
+        .group_by(Entity.id, Entity.name)
+        .order_by(desc("n"))
+        .limit(limit)
+    )).all()
+    return {"entities": [{"entity_id": str(r[0]), "entity_name": r[1], "posts": r[2]} for r in rows], "total": len(rows)}

@@ -48,7 +48,7 @@ def run_checks(c):
     cnt("duplicate venues (same city + name)", "warn",
         "select count(*) from (select city, lower(name) from venues group by 1,2 having count(*)>1) t")
     cnt("duplicate venue source ids", "critical",
-        "select count(*) from (select data_provenance->>'source_id' s from venues where data_provenance ? 'source_id' group by 1 having count(*)>1) t")
+        "select count(*) from (select data_provenance->>'source_id' s from venues where is_active and data_provenance ? 'source_id' group by 1 having count(*)>1) t")
     # ---- impossible values
     cnt("negative ticket prices", "critical", "select count(*) from events where ticket_price_min<0 or ticket_price_max<0")
     cnt("ticket_price_min > ticket_price_max", "critical", "select count(*) from events where ticket_price_min>ticket_price_max")

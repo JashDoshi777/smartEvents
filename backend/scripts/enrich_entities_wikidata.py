@@ -111,7 +111,7 @@ def main():
     # labels for type-defining claims
     need = set()
     for e in ents.values():
-        for pid in ("P31", "P106", "P27", "P495", "P17", "P136", "P19", "P740", "P1412", "P103", "P407", "P159", "P131"):
+        for pid in ("P31", "P106", "P27", "P495", "P17", "P136", "P19", "P740", "P1412", "P103", "P407", "P364", "P2936", "P159", "P131"):
             need.update(x for x in e["claims"].get(pid, []) if isinstance(x, str))
     lab = _wd.labels(sorted(need))
 
@@ -268,7 +268,7 @@ def main():
         ctry = next((lab.get(x) or lab2.get(x) for x in ctry_ids if lab.get(x) or lab2.get(x)), None)
         if ctry and not r["country"]:
             sets["country"] = ctry[:50]; fields.append("country")
-        langs = L([x for x in (cl.get("P407") or cl.get("P103") or cl.get("P1412") or []) if isinstance(x, str)])
+        langs = L([x for x in (cl.get("P407") or cl.get("P364") or cl.get("P103") or cl.get("P1412") or cl.get("P2936") or []) if isinstance(x, str)])
         if langs and not r["language"]:
             sets["language"] = langs[0][:50]; fields.append("language")
         gen = [g for g in L([x for x in cl.get("P136", []) if isinstance(x, str)])][:6]

@@ -15,7 +15,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { EntityPicker } from '@/components/intel/EntityPicker';
 import { useScopedPortfolio } from '@/components/intel/entity-utils';
-import { getSentiment, getTopics, getCrisis } from '@/lib/api';
+import { getSentiment, getSampledEntities, getTopics, getCrisis } from '@/lib/api';
 import { compact, timeAgo } from '@/lib/format';
 import k from '@/components/intel/Kit.module.css';
 import styles from './page.module.css';
@@ -32,17 +32,14 @@ function Content() {
 
   const deep = params.get('entity');
   useEffect(() => { if (deep) setEntityId(deep); }, [deep]);
-  // Listening only samples a rotating subset, so probe the top of the market for entities that actually have data.
-  const probeIds = scoped.slice(0, 40).map(e => e.id);
-  const probe = useSWR(probeIds.length ? ['social/probe', probeIds.join(',')] : null, async () => {
-    const res = await Promise.all(probeIds.map(id => getSentiment(id).catch(() => null)));
-    return res.filter((r): r is NonNullable<typeof r> => !!r && r.status === 'ok').map(r => ({ id: r.entity_id, name: r.entity_name, n: r.sentiment.sample_size ?? 0 })).sort((a, b) => b.n - a.n);
-  }, { revalidateOnFocus: false });
-  const sampled = probe.data ?? [];
+  // Listening only samples a rotating subset: ask the API which entities actually have data (one query).
+  const probe = useSWR(['social/sampled', isIndia ? 'india' : 'global'], () => getSampledEntities(isIndia ? 'india' : 'global'), { revalidateOnFocus: false });
+  const sampledList = (probe.data?.entities ?? []).map(x => ({ id: x.entity_id, name: x.entity_name, n: x.posts }));
+  const sampled = sampledList;
   useEffect(() => {
     if (deep) return;
     if (entityId && scoped.some(e => e.id === entityId)) return;
-    if (probe.data) setEntityId(probe.data[0]?.id ?? scoped.find(e => e.composite_score != null)?.id ?? scoped[0]?.id ?? '');
+    if (probe.data) setEntityId(sampledList[0]?.id ?? scoped.find(e => e.composite_score != null)?.id ?? scoped[0]?.id ?? '');
   }, [probe.data, scoped]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const crisis = useSWR('social/crisis', getCrisis, { refreshInterval: 120000 });

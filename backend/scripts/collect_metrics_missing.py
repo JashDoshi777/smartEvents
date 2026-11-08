@@ -26,13 +26,15 @@ async def main():
     ap.add_argument("--batch", type=int, default=15)
     ap.add_argument("--pause", type=float, default=20)
     ap.add_argument("--retry-incomplete", action="store_true")
+    ap.add_argument("--max-completeness", type=float, default=1.0, help="with --retry-incomplete: only rows below this data_completeness (0.5 skips rows that merely lack news)")
+    ap.add_argument("--skip-news", action="store_true", help="never call NewsAPI (free tier is tiny)")
     a = ap.parse_args()
     import app.workers.entity_metrics as em
     from app.workers.entity_metrics import _process_single_entity
 
     # NewsAPI free tier rate-limits quickly: after the first 429/failure, skip news for the rest of the run
     # (news fields stay NULL, data_completeness reflects it; use --retry-incomplete later).
-    news_state = {"blocked": False, "skipped": 0}
+    news_state = {"blocked": a.skip_news, "skipped": 0}
     orig_news = em._fetch_news_metrics
 
     async def news_guard(name):
@@ -52,13 +54,14 @@ async def main():
     if a.retry_incomplete:
         sql = """select e.id,e.name,e.external_ids,e.entity_type,e.category from entities e
                  join lateral (select data_completeness from entity_metrics m where m.entity_id=e.id order by time desc limit 1) m on true
-                 where e.status='active' and coalesce(m.data_completeness,0) < 1 order by e.name limit :n"""
+                 where e.status='active' and coalesce(m.data_completeness,0) < :mc order by coalesce(m.data_completeness,0), e.name limit :n"""
     else:
         sql = """select e.id,e.name,e.external_ids,e.entity_type,e.category from entities e
                  where e.status='active' and not exists (select 1 from entity_metrics m where m.entity_id=e.id)
                  order by (e.data_provenance->>'sitelinks')::int desc nulls last, e.name limit :n"""
     async with AsyncSessionLocal() as s:
-        rows = (await s.execute(text(sql), {"n": a.limit})).all()
+        params = {"n": a.limit, **({"mc": a.max_completeness} if a.retry_incomplete else {})}
+        rows = (await s.execute(text(sql), params)).all()
     ents = [{"id": r[0], "name": r[1], "external_ids": r[2] or {}, "entity_type": r[3], "category": r[4]} for r in rows]
     print(f"entities to collect: {len(ents)}", flush=True)
     sem = asyncio.Semaphore(3)

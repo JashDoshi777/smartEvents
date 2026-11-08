@@ -845,6 +845,7 @@ export interface TopicsResponse { entity_id: string; topics: { topic: string; me
 export interface CrisisAlert { entity_id: string; entity_name: string; severity: 'critical' | 'high' | 'medium'; negative_share_last_24h: number; negative_share_prior_7d: number; delta_pct_points: number; posts_last_24h: number }
 export const getSentiment = (entityId: string) => apiFetch<SentimentResponse>(`/social/sentiment/${entityId}`);
 export const getTopics = (entityId: string, days = 30) => apiFetch<TopicsResponse>(`/social/topics/${entityId}?days=${days}`);
+export const getSampledEntities = (market: 'india' | 'global' | 'all' = 'all') => apiFetch<{ entities: { entity_id: string; entity_name: string; posts: number }[]; total: number }>(`/social/sampled?market=${market}`);
 export const getCrisis = () => apiFetch<{ alerts: CrisisAlert[]; total: number; methodology?: string }>('/social/crisis-alerts');
 
 // ── Events list ──────────────────────────────────────────────────
