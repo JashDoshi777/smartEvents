@@ -94,7 +94,16 @@ def _spawn(key, factory):
 
     task = asyncio.create_task(run())
     _EXT_TASKS[key] = task
+    task.add_done_callback(_consume_task_error)
     return task
+
+
+def _consume_task_error(task: "asyncio.Task") -> None:
+    """A failed third-party refresh is an expected outage, not a crash: log once, never
+    let asyncio emit 'Task exception was never retrieved'."""
+    if not task.cancelled() and task.exception() is not None:
+        import structlog
+        structlog.get_logger().warning("external refresh failed", error=str(task.exception()))
 
 
 async def _swr(key, factory, fallback):
