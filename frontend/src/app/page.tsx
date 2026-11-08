@@ -1,5 +1,7 @@
 'use client';
 
+import { ScoreValue, ConfidenceTag } from '@/components/intel/ScoreCue';
+import { verifiedNote } from '@/lib/provenance';
 import { useState } from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
@@ -19,7 +21,7 @@ import { inrCompact, num, greeting, dateIN, timeAgo } from '@/lib/format';
 import styles from './page.module.css';
 
 const TIP = { background: 'var(--glass-fill-strong)', border: 'none', borderRadius: 12, fontSize: 13, color: 'var(--text-primary)' };
-const ALERT_LABEL = { breakout: 'Breakout', buzz: 'In the news', opportunity: 'Market gap', info: 'Info' } as const;
+const ALERT_LABEL = { breakout: 'Rising attention', buzz: 'In the news', opportunity: 'Market gap', info: 'Info' } as const;
 
 function MoverRow({ m, up }: { m: ScoreMover; up: boolean }) {
   return (
@@ -124,9 +126,9 @@ export default function DashboardPage() {
                   <div className={styles.avatar}>{e.name.charAt(0).toUpperCase()}</div>
                   <div className={styles.info}>
                     <span className={`t-body ${styles.ellip}`} style={{ fontWeight: 500 }}>{e.name}</span>
-                    <span className={`t-footnote text-secondary ${styles.ellip}`}>{e.category ?? e.type}</span>
+                    <span className={`t-footnote text-secondary ${styles.ellip}`}>{[e.category ?? e.type, verifiedNote(e.signals_used)].filter(Boolean).join(' · ')}<ConfidenceTag confidence={e.score_confidence} signals={e.signals_used} /></span>
                   </div>
-                  <span className={`num-rounded ${styles.val}`}>{e.composite_score}</span>
+                  <span className={`num-rounded ${styles.val}`}><ScoreValue score={e.composite_score} /></span>
                 </motion.div>
               ))}
             </div>

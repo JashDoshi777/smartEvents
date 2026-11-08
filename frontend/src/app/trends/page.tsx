@@ -14,20 +14,35 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Tick } from '@/components/intel/Tick';
 import { initials, typeLabel, useScopedPortfolio } from '@/components/intel/entity-utils';
-import { sourcesNote } from '@/lib/provenance';
-import { getTrendBreakouts, getTrendViral, getDashboardMovers, BreakoutPrediction } from '@/lib/api';
+import { getTrendBreakouts, getTrendViral, getMomentum, BreakoutPrediction, MomentumRow } from '@/lib/api';
+import { ConfidenceTag } from '@/components/intel/ScoreCue';
+import { sourcesNote, verifiedNote } from '@/lib/provenance';
 import { compact, num, timeAgo } from '@/lib/format';
 import k from '@/components/intel/Kit.module.css';
 import styles from './page.module.css';
 
 type SortKey = 'score' | 'search' | 'news' | 'listeners';
 const SORTS: { value: SortKey; label: string }[] = [
-  { value: 'score', label: 'Score' }, { value: 'search', label: 'Search' }, { value: 'news', label: 'News' }, { value: 'listeners', label: 'Listeners' },
+  { value: 'score', label: 'Score' }, { value: 'search', label: 'Search peak' }, { value: 'news', label: 'News' }, { value: 'listeners', label: 'Listeners' },
 ];
 const metricOf = (p: BreakoutPrediction, s: SortKey): number | null =>
   s === 'score' ? p.composite_score : s === 'search' ? p.google_trend_score : s === 'news' ? p.news_mentions_7d : (p.lastfm_listeners ?? null);
 const fmtMetric = (v: number | null, s: SortKey) => (v == null ? '—' : s === 'score' ? v.toFixed(1) : s === 'search' ? String(Math.round(v)) : compact(v));
-const SORT_LABEL: Record<SortKey, string> = { score: 'Composite score', search: 'Search interest', news: 'News mentions, 7 days', listeners: 'Last.fm listeners' };
+const SORT_LABEL: Record<SortKey, string> = { score: 'Composite score', search: 'Search interest vs each name’s own peak', news: 'News mentions, 7 days', listeners: 'Last.fm listeners' };
+
+function MomentumItem({ m }: { m: MomentumRow }) {
+  const pct = m.momentum_pct ?? 0;
+  return (
+    <Link className={k.row} href={`/intelligence?entity=${m.entity_id}`} style={{ ['--inset' as string]: '20px', minHeight: 48 }}>
+      <span className={k.main}>
+        <span className={k.name}>{m.name}</span>
+        <span className={k.sub}>{num(m.views_7d)} views last week · was {num(Math.round(m.views_28d_avg_weekly ?? 0))} a week</span>
+      </span>
+      <span className={`${k.trail} num-rounded`} style={{ color: pct > 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 600 }}>{pct > 0 ? '+' : ''}{Math.round(pct)}%</span>
+      <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />
+    </Link>
+  );
+}
 
 export default function TrendsPage() {
   const { scope, isIndia } = useMarketScope();
@@ -36,7 +51,8 @@ export default function TrendsPage() {
 
   const br = useSWR(['trends/breakout', scope], () => getTrendBreakouts(scope, 50));
   const vi = useSWR(['trends/viral', scope], () => getTrendViral(scope, 8));
-  const mv = useSWR(['trends/movers', scope], () => getDashboardMovers(scope, 5));
+  const mom = useSWR(['trends/momentum', scope], () => getMomentum(scope, 10));
+  const [dir, setDir] = useState<'rising' | 'falling'>('rising');
   const { scoped, isLoading: pLoading } = useScopedPortfolio();
 
   const preds = useMemo(() => br.data?.predictions ?? [], [br.data]);
@@ -113,7 +129,7 @@ export default function TrendsPage() {
                             <span className={k.avatar}>{initials(p.name)}</span>
                             <span className={k.main}>
                               <span className={k.name}>{p.name}{p.trend_direction === 'rising' && <TrendingUp size={13} strokeWidth={1.75} color="var(--positive)" />}{p.trend_direction === 'falling' && <TrendingDown size={13} strokeWidth={1.75} color="var(--negative)" />}</span>
-                              <span className={k.sub}>{p.category ?? typeLabel(p.entity_type)}{sourcesNote(p.data_completeness) && ` · ${sourcesNote(p.data_completeness)}`}</span>
+                              <span className={k.sub}>{p.category ?? typeLabel(p.entity_type)}{verifiedNote(p.signals_used) ? ` · ${verifiedNote(p.signals_used)}` : (sourcesNote(p.data_completeness) && ` · ${sourcesNote(p.data_completeness)}`)}<ConfidenceTag confidence={p.score_confidence} signals={p.signals_used} /></span>
                             </span>
                             <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.0625rem' }}>{fmtMetric(metricOf(p, sort), sort)}</span>
                             <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />
@@ -129,19 +145,25 @@ export default function TrendsPage() {
 
           <div className={styles.side}>
             <div>
-              <div className={styles.sectionRow}><span>Biggest movers</span><span>Vs previous snapshot</span></div>
+              <div className={styles.sectionRow}><span>Biggest movers</span><span>Wikipedia views, last full week</span></div>
               <GlassCard className={k.group} delay={0.12}>
-                {mv.isLoading && !mv.data ? <div style={{ padding: 16 }}><Skeleton height={150} radius={12} /></div>
-                  : mv.error && !mv.data ? <ErrorState message="Couldn’t load movers." onRetry={() => mv.mutate()} />
-                  : (mv.data?.risers.length ?? 0) + (mv.data?.fallers.length ?? 0) === 0 ? <p className="t-footnote text-tertiary" style={{ padding: 20 }}>No score changes between the last two snapshots.</p>
-                  : [...(mv.data?.risers ?? []).slice(0, 3), ...(mv.data?.fallers ?? []).slice(0, 3)].map(m => (
-                    <Link key={m.id} className={k.row} href={`/intelligence?entity=${m.id}`} style={{ ['--inset' as string]: '20px', minHeight: 48 }}>
-                      <span className={k.main}><span className={k.name}>{m.name}</span><span className={k.sub}>{m.previous_score.toFixed(1)} to {m.score.toFixed(1)}</span></span>
-                      <span className={`${k.trail} num-rounded`} style={{ color: m.delta > 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 600 }}>{m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}</span>
-                      <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />
-                    </Link>
-                  ))}
+                {mom.isLoading && !mom.data ? <div style={{ padding: 16 }}><Skeleton height={150} radius={12} /></div>
+                  : mom.error && !mom.data ? <ErrorState message="Couldn’t load movers." onRetry={() => mom.mutate()} />
+                  : (mom.data?.risers.length ?? 0) + (mom.data?.fallers.length ?? 0) === 0 ? <p className="t-footnote text-tertiary" style={{ padding: 20 }}>No clear movers this week. Moves inside an act’s normal weekly range are not shown.</p>
+                  : [...(mom.data?.risers ?? []).slice(0, 3), ...(mom.data?.fallers ?? []).slice(0, 3)].map(m => <MomentumItem key={m.entity_id} m={m} />)}
               </GlassCard>
+            </div>
+            <div>
+              <div className={styles.sectionRow}>
+                <span>Rising / Falling</span>
+                <Segmented ariaLabel="Direction" value={dir} onChange={setDir} options={[{ value: 'rising', label: 'Rising' }, { value: 'falling', label: 'Falling' }]} />
+              </div>
+              <GlassCard className={k.group} delay={0.13}>
+                {mom.isLoading && !mom.data ? <div style={{ padding: 16 }}><Skeleton height={150} radius={12} /></div>
+                  : (dir === 'rising' ? mom.data?.risers : mom.data?.fallers)?.length ? (dir === 'rising' ? mom.data!.risers : mom.data!.fallers).map(m => <MomentumItem key={m.entity_id} m={m} />)
+                  : <p className="t-footnote text-tertiary" style={{ padding: 20 }}>None this week.</p>}
+              </GlassCard>
+              {mom.data?.as_of_week && <p className="t-caption text-tertiary" style={{ padding: '8px 4px 0', lineHeight: 1.45 }}>Week of {mom.data.as_of_week} vs the average of the 4 weeks before. Only acts with at least {num(mom.data.formula?.min_baseline_views_per_week ?? 1000)} views a week and a move beyond their normal range are shown. Wikipedia views measure attention, not audience size.</p>}
             </div>
             <div>
               <div className={styles.sectionRow}><span>Buzz this week</span><span>News mentions</span></div>
@@ -159,7 +181,7 @@ export default function TrendsPage() {
               </GlassCard>
             </div>
             <div>
-              <div className={styles.sectionRow}><span>Search interest</span><span>Google Trends, 0–100</span></div>
+              <div className={styles.sectionRow}><span>Search spikes</span><span>Google Trends, vs own peak</span></div>
               <GlassCard className={k.group} delay={0.18}>
                 {loading ? <div style={{ padding: 16 }}><Skeleton height={150} radius={12} /></div> : heat.length === 0 ? <p className="t-footnote text-tertiary" style={{ padding: 20 }}>No Google Trends data for this market yet.</p> : heat.map(p => (
                   <Link key={p.entity_id} className={k.row} href={`/intelligence?entity=${p.entity_id}`} style={{ ['--inset' as string]: '20px', minHeight: 48 }}>
@@ -169,6 +191,7 @@ export default function TrendsPage() {
                   </Link>
                 ))}
               </GlassCard>
+              <p className="t-caption text-tertiary" style={{ padding: '8px 4px 0', lineHeight: 1.45 }}>0–100 is each name’s own peak (100 = its busiest day), so it is not comparable between acts.</p>
             </div>
           </div>
         </div>

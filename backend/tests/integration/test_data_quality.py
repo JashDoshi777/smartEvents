@@ -64,3 +64,46 @@ def test_enriched_rows_have_provenance(conn):
     assert n == 0
     n = conn.execute(text("select count(*) from cities where data_provenance is null")).scalar()
     assert n == 0, "every city row must carry provenance (source/QID) or an explicit curated note"
+
+
+# ---- identity / signal-validity invariants (Data Agent A) ----
+LATEST = "(select distinct on (entity_id) * from entity_metrics order by entity_id, time desc)"
+
+
+def test_no_lastfm_on_non_music_types(conn):
+    from sqlalchemy import text
+    bad = conn.execute(text(f"""select e.name, e.entity_type, m.signal_validity->>'lastfm' from entities e join {LATEST} m on m.entity_id=e.id
+        where e.status='active' and e.entity_type in ('sports_team','comedian','movie','attraction')
+        and m.signal_validity is not null and coalesce(m.signal_validity->>'lastfm','') <> 'wrong_type'""")).all()
+    assert not bad, bad
+
+
+def test_verified_youtube_has_similarity(conn):
+    from sqlalchemy import text
+    bad = conn.execute(text(f"""select e.name from entities e join {LATEST} m on m.entity_id=e.id
+        where m.signal_validity->>'youtube' like 'verified%' and (m.signal_validity->'youtube_detail'->>'similarity') is null""")).all()
+    assert not bad, bad
+    low = conn.execute(text(f"""select e.name from entities e join {LATEST} m on m.entity_id=e.id
+        where m.signal_validity->>'youtube'='verified_wikidata' and (m.signal_validity->'youtube_detail'->>'similarity')::float < 85""")).all()
+    assert not low, low
+
+
+def test_no_shared_wikidata_qid_among_active(conn):
+    from sqlalchemy import text
+    bad = conn.execute(text("""select external_ids->>'wikidata_qid' from entities where status='active' and external_ids ? 'wikidata_qid'
+        group by 1 having count(*)>1""")).all()
+    assert not bad, bad
+
+
+def test_domestic_entities_have_india_or_unknown_nationality(conn):
+    from sqlalchemy import text
+    bad = conn.execute(text("""select name, nationality from entities where status='active' and coalesce(is_international,false)=false
+        and nationality is not null and nationality<>'India'""")).all()
+    assert not bad, bad
+
+
+def test_merged_entities_are_inactive_and_point_to_survivor(conn):
+    from sqlalchemy import text
+    bad = conn.execute(text("""select e.name from entities e where e.data_provenance ? 'merged_into' and (e.status='active'
+        or not exists (select 1 from entities k where k.id::text = e.data_provenance->>'merged_into'))""")).all()
+    assert not bad, bad

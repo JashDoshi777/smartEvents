@@ -32,7 +32,7 @@ def http():
 GET_ENDPOINTS = [
     "/dashboard/summary", "/dashboard/summary?market=india", "/dashboard/alerts",
     "/entities/category/artist", "/entities/category/comedian",
-    "/trends/breakout", "/trends/breakout?market=india", "/trends/viral", "/trends/regional",
+    "/trends/breakout", "/trends/breakout?market=india", "/trends/viral", "/trends/regional", "/trends/momentum?market=india",
     "/cities/", "/cities/top", "/cities/gaps", "/cities/Mumbai/intelligence",
     "/cities/Mumbai/venues", "/cities/Mumbai/restaurants",
     "/competitors/intelligence", "/competitors/gaps", "/competitors/activity-feed",

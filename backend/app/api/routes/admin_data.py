@@ -7,13 +7,14 @@ Only whitelisted fields can be set; values are validated; each change is recorde
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import String, Text, and_, case, func, or_, select
+from sqlalchemy import String, Text, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -22,6 +23,7 @@ from app.core.database import get_db
 from app.core.response_cache import invalidate_all
 from app.models.city import City
 from app.models.entity import Entity, EntityType
+from app.models.metrics import EntityMetric
 from app.models.user import User, UserRole
 from app.models.venue import Venue, VenueType
 from app.services.market_scope import market_clause
@@ -44,6 +46,53 @@ ENTITY_FIELDS: Dict[str, dict] = {
     "booking_price_range_min": F(0, 1e9), "booking_price_range_max": F(0, 1e9),
     "typical_venue_capacity_min": I(1, 500000), "typical_venue_capacity_max": I(1, 500000), "is_international": B(),
 }
+# Identity ids live in entities.external_ids (JSONB), not columns: validated by regex, stored with provenance 'manual'.
+IDENTITY_FIELDS: Dict[str, re.Pattern] = {
+    "youtube_channel_id": re.compile(r"^UC[0-9A-Za-z_-]{22}$"),
+    "musicbrainz_id": re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+    "wikidata_qid": re.compile(r"^Q[1-9][0-9]{0,12}$"),
+}
+
+
+def validate_identity(fields: Dict[str, Any]) -> Dict[str, str]:
+    """Clean + validate identity ids (pure). Raises HTTPException(422) like validate_patch."""
+    errors, clean = {}, {}
+    for k, v in fields.items():
+        if not isinstance(v, str) or not v.strip():
+            errors[k] = "must be a non-empty string"
+            continue
+        v = v.strip()
+        if k == "musicbrainz_id":
+            v = v.lower()
+        if not IDENTITY_FIELDS[k].match(v):
+            errors[k] = {"youtube_channel_id": "must look like UC + 22 chars (channel id, not a @handle)",
+                         "musicbrainz_id": "must be a MusicBrainz artist MBID (uuid)",
+                         "wikidata_qid": "must look like Q12345"}[k]
+            continue
+        clean[k] = v
+    if errors:
+        raise HTTPException(422, {"error": "invalid values", "fields": errors})
+    return clean
+
+
+def apply_identity_edit(external_ids: Optional[Dict[str, Any]], clean: Dict[str, str], email: str, now: Optional[str] = None):
+    """Pure. Returns (new_external_ids, changed{field:{old,new}}); provenance in external_ids.identity_manual."""
+    now = now or datetime.now(timezone.utc).isoformat()
+    ext = dict(external_ids or {})
+    man = dict(ext.get("identity_manual") or {})
+    changed = {}
+    for k, v in clean.items():
+        old = ext.get(k)
+        if old == v:
+            continue
+        ext[k] = v
+        man[k] = {"source": "manual", "by": email, "at": now, "previous": old}
+        changed[k] = {"old": old, "new": v}
+    if changed:
+        ext["identity_manual"] = man
+    return ext, changed
+
+
 VENUE_FIELDS: Dict[str, dict] = {
     "total_capacity": I(1, 500000), "standing_capacity": I(0, 500000), "seated_capacity": I(0, 500000), "vip_capacity": I(0, 100000),
     "venue_type": E(v.value for v in VenueType), "address": S(1000), "pincode": S(10), "state": S(100),
@@ -160,6 +209,8 @@ async def data_gaps(
     city: Optional[str] = Query(None, description="entities: home_city; venues: city; cities: name (case-insensitive)"),
     missing: List[str] = Query(default=[], description="repeatable; only rows missing ALL of these fields"),
     q: Optional[str] = Query(None, max_length=100, description="name contains"),
+    signal: Optional[str] = Query(None, pattern="^(youtube|lastfm):[a-z_]{3,40}$",
+                                  description="entities only: latest signal_validity verdict, e.g. youtube:unresolved, lastfm:wrong_type"),
     page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
     db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*_ROLES)),
 ):
@@ -184,6 +235,12 @@ async def data_gaps(
     else:
         if city:
             conds.append(func.lower(City.name) == city.lower())
+    if signal and kind == "entities":
+        sig_key, sig_verdict = signal.split(":", 1)
+        lat = (select(EntityMetric.entity_id.label("entity_id"), EntityMetric.signal_validity.label("sv"))
+               .where(EntityMetric.signal_validity.isnot(None))
+               .distinct(EntityMetric.entity_id).order_by(EntityMetric.entity_id, EntityMetric.time.desc()).subquery())
+        conds.append(Entity.id.in_(select(lat.c.entity_id).where(lat.c.sv[sig_key].astext == sig_verdict)))
     if q:
         conds.append(model.name.ilike(f"%{q.replace('%', '').replace('_', '')}%"))
     base = and_(*conds) if conds else True
@@ -202,6 +259,12 @@ async def data_gaps(
     extra = {"entities": [Entity.entity_type, Entity.home_city], "venues": [Venue.venue_type, Venue.city], "cities": [City.state]}[kind]
     stmt = select(*cols, *extra).where(base).order_by(model.name).limit(page_size).offset((page - 1) * page_size)
     rows = (await db.execute(stmt)).all()
+    verdicts = {}
+    if kind == "entities" and rows:
+        ids = [r[0] for r in rows]
+        lat2 = (select(EntityMetric.entity_id, EntityMetric.signal_validity).where(EntityMetric.entity_id.in_(ids), EntityMetric.signal_validity.isnot(None))
+                .distinct(EntityMetric.entity_id).order_by(EntityMetric.entity_id, EntityMetric.time.desc()))
+        verdicts = {str(e): {"youtube": (sv or {}).get("youtube"), "lastfm": (sv or {}).get("lastfm")} for e, sv in (await db.execute(lat2)).all()}
     items = []
     for r in rows:
         vals = dict(zip(["id", "name"] + tracked, r[: 2 + len(tracked)]))
@@ -209,13 +272,13 @@ async def data_gaps(
         item = {"id": str(vals["id"]), "name": vals["name"], "missing": miss, "missing_count": len(miss)}
         ex = r[2 + len(tracked):]
         if kind == "entities":
-            item.update(entity_type=ex[0], home_city=ex[1])
+            item.update(entity_type=ex[0], home_city=ex[1], signals=verdicts.get(item["id"]))
         elif kind == "venues":
             item.update(venue_type=ex[0], city=ex[1])
         else:
             item.update(state=ex[0])
         items.append(item)
-    return {"kind": kind, "tracked_fields": tracked, "editable_fields": sorted(KINDS[kind][1]),
+    return {"kind": kind, "tracked_fields": tracked, "editable_fields": sorted(KINDS[kind][1]) + (sorted(IDENTITY_FIELDS) if kind == "entities" else []),
             "scope_total": total_scope, "summary_missing_counts": summary,
             "total": total, "page": page, "page_size": page_size, "items": items}
 
@@ -238,7 +301,49 @@ async def _patch(db: AsyncSession, model, allowed, obj_id: UUID, body: Dict[str,
 
 @router.patch("/entities/{entity_id}", summary="Manually set missing entity fields")
 async def patch_entity(entity_id: UUID, body: Dict[str, Any], db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*_ROLES))):
-    return await _patch(db, Entity, ENTITY_FIELDS, entity_id, body, user, "entities")
+    ident = {k: v for k, v in (body or {}).items() if k in IDENTITY_FIELDS} if isinstance(body, dict) else {}
+    if not ident:
+        return await _patch(db, Entity, ENTITY_FIELDS, entity_id, body, user, "entities")
+    rest = {k: v for k, v in body.items() if k not in IDENTITY_FIELDS}
+    clean_ident = validate_identity(ident)
+    clean_rest = validate_patch(rest, ENTITY_FIELDS) if rest else {}
+    obj = (await db.execute(select(Entity).where(Entity.id == entity_id))).scalar_one_or_none()
+    if obj is None:
+        raise HTTPException(404, "entity not found")
+    changed = apply_manual_edit(obj, clean_rest, user.email) if clean_rest else {}
+    ext, ich = apply_identity_edit(obj.external_ids, clean_ident, user.email)
+    if ich:
+        obj.external_ids = ext
+        flag_modified(obj, "external_ids")
+        prov = dict(obj.data_provenance or {})
+        mf = dict(prov.get("manual_fields") or {})
+        now = datetime.now(timezone.utc).isoformat()
+        for k in ich:
+            mf[k] = {"source": "manual", "by": user.email, "at": now}
+        prov["manual_fields"] = mf
+        obj.data_provenance = prov
+        flag_modified(obj, "data_provenance")
+        changed.update(ich)
+        if "youtube_channel_id" in ich:
+            # a human vouches for the channel: mark it verified (manual) on the newest metric row. The stored subscriber
+            # count may belong to a different channel, so it is cleared (old value kept in signal_provenance) and refreshed
+            # by the next collection, which uses youtube_detail.channel_id.
+            await db.execute(text("""
+                update entity_metrics m set youtube_subscribers = null,
+                  signal_validity = coalesce(m.signal_validity,'{}'::jsonb) || jsonb_build_object('youtube','verified_manual',
+                      'youtube_detail', jsonb_build_object('verdict','verified_manual','channel_id', cast(:cid as text),'id_source','manual:'||cast(:by as text))),
+                  signal_provenance = coalesce(m.signal_provenance,'{}'::jsonb) || jsonb_build_object('youtube_subscribers_prev',
+                      jsonb_build_object('value', m.youtube_subscribers, 'note','cleared when channel id was set manually'))
+                where m.entity_id = :e and m.time = (select max(time) from entity_metrics where entity_id = :e)"""),
+                {"cid": ich["youtube_channel_id"]["new"], "by": user.email, "e": entity_id})
+    if changed:
+        await db.commit()
+        logger.info("manual data edit", kind="entities", id=str(entity_id), by=user.email, fields=sorted(changed), cache_cleared=invalidate_all())
+    return {"id": str(entity_id), "kind": "entities", "changed": changed,
+            "unchanged": sorted(set(clean_rest) | set(clean_ident) - set(changed)),
+            "provenance": {k: ({"source": "manual", "by": user.email} if k in ich else (obj.data_provenance or {}).get("manual_fields", {}).get(k))
+                           for k in {**clean_rest, **clean_ident}},
+            "note": "Run scripts/recompute_v3.py --apply to refresh stored scores." if ich else None}
 
 
 @router.patch("/venues/{venue_id}", summary="Manually set missing venue fields")

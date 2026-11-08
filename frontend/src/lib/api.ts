@@ -387,6 +387,8 @@ export interface PortfolioEntity {
   country: string; primary_market?: string | null; is_international: boolean; composite_score: number | null;
   google_trend_score: number | null; news_mentions_7d: number | null;
   health: string; last_updated: string | null;
+  /** v3 score block (additive): null composite_score means "Unrated - not enough verified data". */
+  unrated?: boolean; score_confidence?: number | null; signals_used?: string[] | null; score_verdict?: string | null;
 }
 
 export interface CitiesResponse { cities: CityItem[]; total: number; }
@@ -556,7 +558,8 @@ export interface TrendingEntity {
   category: string | null;
   country: string;
   is_international: boolean;
-  composite_score: number;
+  composite_score: number | null;
+  score_confidence?: number | null; signals_used?: string[] | null; unrated?: boolean;
   google_trend: number | null;
   news_mentions_7d: number | null;
   listeners: number | null;
@@ -621,6 +624,7 @@ export const getDashboardSummaryScoped = (market: 'india' | 'global' | 'all' = '
 export interface BreakoutPrediction {
   entity_id: string; name: string; entity_type: string; category: string | null; country: string | null;
   composite_score: number | null; trend_direction: 'rising' | 'falling' | 'stable' | 'pending';
+  score_confidence?: number | null; signals_used?: string[] | null; unrated?: boolean;
   lastfm_listeners?: number | null; news_mentions_7d: number | null; google_trend_score: number | null; data_completeness?: number | null; last_updated: string | null;
 }
 export interface BreakoutResponse { predictions: BreakoutPrediction[]; total: number; has_live_scores: boolean; note?: string }
@@ -634,15 +638,34 @@ export const getTrendBreakouts = (market: 'india' | 'global' | 'all' = 'all', li
 export const getTrendViral = (market: 'india' | 'global' | 'all' = 'all', limit = 12) =>
   apiFetch<ViralResponse>(`/trends/viral?market=${market}&limit=${limit}`);
 
+export interface SignalValidity {
+  youtube?: string | null; lastfm?: string | null; trends?: string | null; news?: string | null; wiki?: string | null;
+  youtube_detail?: { title?: string; channel_id?: string; id_source?: string } | null;
+}
 export interface EntityScoreResponse {
   entity_id: string; entity_name: string; composite_score: number | null; trend_direction: string;
-  signals: { lastfm_listeners?: number | null; youtube_subscribers?: number | null; youtube_views_30d?: number | null;
+  unrated?: boolean; score_confidence?: number | null; signals_used?: string[] | null; score_verdict?: string | null; score_version?: string | null;
+  signal_validity?: SignalValidity | null;
+  signals: { wikipedia_views_30d?: number | null; google_trend_relative?: number | null; google_trend_basis?: string | null; news_confidence?: string | null; lastfm_listeners?: number | null; youtube_subscribers?: number | null; youtube_views_30d?: number | null;
     news_mentions_7d?: number | null; google_trend_score?: number | null; google_trend_delta_7d?: number | null;
     sentiment_compound?: number | null; data_completeness?: number | null };
   data_completeness?: number | null;
   last_updated: string | null; data_sources: string[]; message?: string;
 }
 export const getEntityScore = (entityId: string) => apiFetch<EntityScoreResponse>(`/entities/${entityId}/score`);
+// ── Weekly Wikipedia momentum (real attention history; see backend services/momentum.py) ──
+export interface MomentumRow {
+  entity_id: string; name: string; entity_type: string; category: string | null;
+  views_7d: number | null; views_28d_avg_weekly: number | null; momentum_pct: number | null;
+  label: 'rising' | 'falling' | 'steady' | null; robust_z: number | null; weeks_of_history: number;
+}
+export interface MomentumResponse {
+  market: string; as_of_week: string | null; entities_with_history: number; entities_with_momentum: number;
+  risers: MomentumRow[]; fallers: MomentumRow[];
+  formula?: { min_baseline_views_per_week: number; rising_pct: number; falling_pct: number; min_abs_robust_z?: number; source: string };
+}
+export const getMomentum = (market: 'india' | 'global' | 'all' = 'india', limit = 10) =>
+  apiFetch<MomentumResponse>(`/trends/momentum?market=${market}&limit=${limit}`);
 export interface EntityCityDemand { city: string; state: string | null; tier: number | null; demand_score: number; is_home_city: boolean; active_on_district: boolean; demand_rank: number }
 export const getEntityCities = (entityId: string) =>
   apiFetch<{ entity_id: string; entity_name: string; cities: EntityCityDemand[]; methodology: string }>(`/entities/${entityId}/cities`);
@@ -651,6 +674,7 @@ export interface CompareProfile {
   home_city?: string | null; primary_market?: string | null; booking_price_range_min?: number | null; booking_price_range_max?: number | null;
   typical_venue_capacity_min?: number | null; typical_venue_capacity_max?: number | null;
   composite_score: number | null; trend_direction: string; listeners: number | null;
+  unrated?: boolean; score_confidence?: number | null; signals_used?: string[] | null;
 }
 export const compareEntities = (ids: string[]) =>
   apiFetch<{ entities: CompareProfile[]; comparison_count: number }>('/entities/compare', { method: 'POST', body: JSON.stringify(ids) });
@@ -802,14 +826,14 @@ export interface KPIResponse {
     avg_composite_score: number | null; by_type: Record<string, number>;
     top_categories: { category: string; count: number }[]; international: number; indian: number;
   };
-  top_entities: { name: string; type: string; category: string; composite_score: number; google_trend: number; news_mentions_7d: number }[];
+  top_entities: { name: string; type: string; category: string; composite_score: number | null; score_confidence?: number | null; signals_used?: string[] | null; google_trend: number; news_mentions_7d: number }[];
   city_coverage: { total_tracked: number; active_on_district: number; expansion_opportunities: number };
 }
 
 // ── Recommendations (market-aware) ───────────────────────────────
 export interface RecommendationItem {
   entity_id: string; entity_name: string; entity_type: string; category: string | null; is_international: boolean;
-  composite_score: number; city_demand_score: number | null; recommendation_score: number;
+  composite_score: number; score_confidence?: number | null; signals_used?: string[] | null; city_demand_score: number | null; recommendation_score: number;
   trend_direction: 'rising' | 'falling' | 'stable'; last_updated: string | null; rank: number;
 }
 export interface RecommendationsResponse { recommendations: RecommendationItem[]; total_candidates: number; methodology: string; model_provenance?: string }
@@ -926,25 +950,26 @@ export interface CopilotStreamSources { sources: string[] }
 
 // ── Admin: data quality + scheduler ─────────────────────────────────
 export type GapKind = 'entities' | 'venues' | 'cities';
-export interface GapItem { id: string; name: string; missing: string[]; missing_count: number; entity_type?: string | null; home_city?: string | null; venue_type?: string | null; city?: string | null; state?: string | null }
+export interface GapItem { id: string; name: string; missing: string[]; missing_count: number; signals?: { youtube?: string | null; lastfm?: string | null } | null; entity_type?: string | null; home_city?: string | null; venue_type?: string | null; city?: string | null; state?: string | null }
 export interface DataGapsResponse {
   kind: GapKind; tracked_fields: string[]; editable_fields: string[]; scope_total: number; summary_missing_counts: Record<string, number>;
   total: number; page: number; page_size: number; items: GapItem[];
 }
-export interface GapQuery { kind: GapKind; type?: string; market?: 'all' | 'india' | 'global'; city?: string; missing?: string[]; q?: string; page?: number; page_size?: number }
+export interface GapQuery { signal?: string; kind: GapKind; type?: string; market?: 'all' | 'india' | 'global'; city?: string; missing?: string[]; q?: string; page?: number; page_size?: number }
 export const getDataGaps = (p: GapQuery) => {
   const q = new URLSearchParams({ kind: p.kind });
   if (p.type) q.set('type', p.type);
   if (p.kind === 'entities' && p.market && p.market !== 'all') q.set('market', p.market);
   if (p.city) q.set('city', p.city);
   if (p.q) q.set('q', p.q);
+  if (p.kind === 'entities' && p.signal) q.set('signal', p.signal);
   (p.missing ?? []).forEach(m => q.append('missing', m));
   q.set('page', String(p.page ?? 1));
   q.set('page_size', String(p.page_size ?? 25));
   return apiFetchStrict<DataGapsResponse>(`/admin/data-gaps?${q}`);
 };
 export interface ProvenanceEntry { source: string; by?: string; at?: string }
-export interface PatchResult { id: string; kind: GapKind; changed: Record<string, { old: unknown; new: unknown }>; unchanged: string[]; provenance: Record<string, ProvenanceEntry> }
+export interface PatchResult { id: string; kind: GapKind; changed: Record<string, { old: unknown; new: unknown }>; unchanged: string[]; provenance: Record<string, ProvenanceEntry>; note?: string | null }
 export const patchAdminRecord = (kind: GapKind, id: string, body: Record<string, string | number | boolean>) =>
   apiFetchStrict<PatchResult>(`/admin/${kind}/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 

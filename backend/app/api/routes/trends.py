@@ -18,11 +18,24 @@ from app.models.entity import Entity
 from app.models.event import Event
 from app.models.user import User
 from app.models.venue import Venue
-from app.services.latest_metric import latest_metric, trend_direction
+from app.services.latest_metric import latest_metric, score_fields, trend_direction
 from app.services.market_scope import Market, market_clause
 
 router = APIRouter()
 logger = structlog.get_logger()
+
+
+@router.get("/momentum", summary="Top risers/fallers by real weekly Wikipedia attention history")
+async def get_momentum(
+    market: Market = "india",
+    limit: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Momentum = last complete ISO week's Wikipedia pageviews vs the mean of the 4 weeks before it (NULL when that
+    baseline is under 200 views/week). Includes robust z-score against the entity's own 26-week history."""
+    from app.services.momentum import momentum_for_market
+    return {"market": market, **await momentum_for_market(db, market_clause(market), limit)}
 
 
 @router.get("/breakout", summary="Top entities by composite score")
@@ -52,7 +65,7 @@ async def get_breakouts(
             stmt = stmt.where(Entity.is_international == is_international)
         return stmt
 
-    scored_stmt = _filters(select(Entity, lm).join(lm, Entity.id == lm.entity_id)).order_by(
+    scored_stmt = _filters(select(Entity, lm).join(lm, Entity.id == lm.entity_id).where(lm.composite_score.isnot(None))).order_by(
         lm.composite_score.desc(), Entity.name, Entity.id
     ).limit(limit)
     fallback_stmt = _filters(select(Entity).where(Entity.status == "active")).order_by(
@@ -64,7 +77,7 @@ async def get_breakouts(
         {
             "entity_id": str(e.id), "name": e.name, "entity_type": e.entity_type,
             "category": e.category, "country": e.country,
-            "composite_score": round(m.composite_score, 1),
+            **score_fields(m.composite_score, m.score_confidence, m.signals_used),
             "trend_direction": trend_direction(m.trend_velocity),
             "lastfm_listeners": m.lastfm_listeners,
             "news_mentions_7d": m.news_mentions_7d,
@@ -91,7 +104,7 @@ async def get_breakouts(
         "total": len(scored),
         "market": market,
         "has_live_scores": any(p["composite_score"] is not None for p in scored),
-        "note": "Scores computed from Last.fm, YouTube, Google Trends, NewsAPI signals (weights renormalised over available sources; see data_completeness).",
+        "note": "Composite v3: per-type weighted score over VERIFIED signals only (YouTube, Wikipedia, Last.fm for artists, anchored Google Trends, strictly filtered news). Entities with too little verified data are unrated and never ranked.",
     }
 
 
@@ -108,7 +121,7 @@ async def get_viral_signals(
         select(Entity, lm)
         .join(lm, Entity.id == lm.entity_id)
         .where(lm.news_mentions_7d > 0, market_clause(market))
-        .order_by(desc(lm.news_mentions_7d), lm.composite_score.desc(), Entity.name, Entity.id)
+        .order_by(desc(lm.news_mentions_7d), lm.composite_score.desc().nullslast(), Entity.name, Entity.id)
         .limit(limit)
     )
     rows = (await db.execute(stmt)).all()
@@ -118,7 +131,7 @@ async def get_viral_signals(
             "entity_id": str(e.id), "name": e.name, "entity_type": e.entity_type,
             "news_mentions_7d": m.news_mentions_7d,
             "google_trend_score": m.google_trend_score,
-            "composite_score": round(m.composite_score, 1),
+            **score_fields(m.composite_score, m.score_confidence, m.signals_used),
             "sentiment_compound": m.sentiment_compound,
         }
         for e, m in rows

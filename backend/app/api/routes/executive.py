@@ -22,7 +22,7 @@ from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.models.city import City
 from app.core.config import settings
-from app.services.latest_metric import latest_metric
+from app.services.latest_metric import latest_metric, score_fields
 from app.services.market_scope import Market, market_clause
 from app.services.portfolio import stats_dict, stats_stmt, health_label
 from app.services.market_scope import market_clause
@@ -47,9 +47,9 @@ async def _kpis_payload(market: str) -> dict:
     )
     top_stmt = (
         select(Entity.name, Entity.entity_type, Entity.category, lm.composite_score,
-               lm.google_trend_score, lm.news_mentions_7d, lm.data_completeness)
+               lm.google_trend_score, lm.news_mentions_7d, lm.data_completeness, lm.score_confidence, lm.signals_used)
         .join(lm, Entity.id == lm.entity_id)
-        .where(scope)
+        .where(scope, lm.composite_score.isnot(None))
         .order_by(desc(lm.composite_score), Entity.name)
         .limit(5)
     )
@@ -69,6 +69,7 @@ async def _kpis_payload(market: str) -> dict:
             "with_live_metrics": stats["scored"],
             "metrics_coverage_pct": stats["coverage_pct"],
             "avg_composite_score": stats["avg_score"],
+            "unrated": stats["unrated"],
             "by_type": {r[0]: r[1] for r in type_rows},
             "top_categories": [{"category": r[0], "count": r[1]} for r in cat_rows],
             "international": stats["international"],
@@ -76,7 +77,7 @@ async def _kpis_payload(market: str) -> dict:
         },
         "top_entities": [
             {"name": r[0], "type": r[1], "category": r[2],
-             "composite_score": round(float(r[3]), 1), "google_trend": r[4],
+             **score_fields(r[3], r[7], r[8]), "google_trend": r[4],
              "news_mentions_7d": r[5], "data_completeness": r[6]}
             for r in top_rows
         ],
@@ -108,7 +109,7 @@ async def _briefing_payload(market: str) -> dict:
     top_stmt = (
         select(Entity.name, Entity.entity_type, Entity.category, lm.composite_score,
                lm.google_trend_score, lm.news_mentions_7d, lm.lastfm_listeners)
-        .join(lm, Entity.id == lm.entity_id).where(scope)
+        .join(lm, Entity.id == lm.entity_id).where(scope, lm.composite_score.isnot(None))
         .order_by(desc(lm.composite_score), Entity.name).limit(5)
     )
     cities_stmt = (
@@ -189,7 +190,8 @@ async def get_portfolio(
     stmt = (
         select(Entity.id, Entity.name, Entity.entity_type, Entity.category, Entity.country,
                Entity.is_international, lm.composite_score, lm.google_trend_score,
-               lm.news_mentions_7d, lm.time, lm.data_completeness, Entity.primary_market)
+               lm.news_mentions_7d, lm.time, lm.data_completeness, Entity.primary_market,
+               lm.score_confidence, lm.signals_used)
         .outerjoin(lm, Entity.id == lm.entity_id)
         .where(market_clause(market))
         .order_by(lm.composite_score.desc().nullslast(), Entity.name.asc(), Entity.id)
@@ -206,7 +208,7 @@ async def get_portfolio(
             "id": str(r[0]), "name": r[1], "type": r[2], "category": r[3], "country": r[4],
             "primary_market": r[11],
             "is_international": r[5] or False,
-            "composite_score": round(float(score), 1) if score is not None else None,
+            **score_fields(score, r[12], r[13]),
             "google_trend_score": r[7], "news_mentions_7d": r[8],
             "health": health_label(score),
             "data_completeness": r[10],
@@ -222,7 +224,8 @@ async def get_portfolio(
         "offset": offset,
         "market": market,
         "with_scores": sum(1 for p in portfolio if p["composite_score"] is not None),
-        "health_summary": {"strong": _n("Strong"), "good": _n("Good"), "needs_data": _n("Needs data"), "weak": _n("Weak")},
+        "unrated": sum(1 for p in portfolio if p["composite_score"] is None),
+        "health_summary": {"strong": _n("Strong"), "good": _n("Good"), "needs_data": _n("Needs data"), "unrated": _n("Needs data"), "weak": _n("Weak")},
     }
 
 

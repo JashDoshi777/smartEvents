@@ -115,26 +115,29 @@ test.describe('Intelligence Hub: accuracy, URL state, export, keyboard', () => {
   });
 });
 
-test('Trend Radar movers equal the API', async ({ page }) => {
-  const mv = await apiGet<{ risers: { name: string; delta: number }[]; fallers: { name: string; delta: number }[] }>(page, '/dashboard/movers?market=india&limit=5');
+test('Trend Radar movers equal the momentum API', async ({ page }) => {
+  const mv = await apiGet<{ risers: { name: string; momentum_pct: number }[]; fallers: { name: string; momentum_pct: number }[] }>(page, '/trends/momentum?market=india&limit=10');
   await page.goto('/trends');
   await expect(page.getByText('Biggest movers')).toBeVisible({ timeout: 40_000 });
-  if (!mv.risers.length && !mv.fallers.length) { await expect(page.getByText(/No score changes/)).toBeVisible(); return; }
-  const r = mv.risers[0];
-  await expect(page.getByRole('link', { name: new RegExp(r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).filter({ hasText: `+${r.delta.toFixed(1)}` }).first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('Rising / Falling')).toBeVisible();
+  if (!mv.risers.length && !mv.fallers.length) { await expect(page.getByText(/No clear movers/)).toBeVisible(); return; }
+  const r = mv.risers[0] ?? mv.fallers[0];
+  const pct = `${r.momentum_pct > 0 ? '+' : ''}${Math.round(r.momentum_pct)}%`;
+  await expect(page.getByRole('link', { name: new RegExp(r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).filter({ hasText: pct }).first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/views last week/).first()).toBeVisible();
 });
 
 test('Trend Radar renders real data and responds to scope + sort', async ({ page }) => {
   const errors = trackErrors(page);
   await page.goto('/trends');
   await expect(page.getByText('Composite score').first()).toBeVisible();
-  await expect(page.locator('a[href^="/intelligence?entity="]').first()).toBeVisible({ timeout: 30_000 });
-  const first = await page.locator('a[href^="/intelligence?entity="]').first().innerText();
+  await expect(page.locator('a[href^="/intelligence?entity="]').filter({ hasText: /\S/ }).first()).toBeVisible({ timeout: 30_000 });
+  const first = await page.locator('a[href^="/intelligence?entity="]').filter({ hasText: /\S/ }).first().innerText();
   await page.getByRole('button', { name: 'News', exact: true }).click();
   await expect(page.getByRole('button', { name: 'News', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Global', exact: true }).click();
   await expect(page.getByText(/across .* scored global entities/i)).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('a[href^="/intelligence?entity="]').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('a[href^="/intelligence?entity="]').filter({ hasText: /\S/ }).first()).toBeVisible({ timeout: 30_000 });
   expect(first).toBeTruthy();
   expect(errors.filter(e => !benign(e))).toEqual([]);
 });

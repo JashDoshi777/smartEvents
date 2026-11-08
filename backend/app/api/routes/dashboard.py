@@ -28,7 +28,7 @@ from app.models.event import Event
 from app.models.metrics import EntityMetric
 from app.models.user import User
 from app.models.venue import Venue
-from app.services.latest_metric import latest_metric
+from app.services.latest_metric import latest_metric, score_fields
 from app.services.market_scope import Market, market_clause
 from app.services.portfolio import stats_dict, stats_stmt
 
@@ -59,9 +59,9 @@ async def get_dashboard_summary(
     trending_stmt = (
         select(Entity.id, Entity.name, Entity.entity_type, Entity.category, Entity.country,
                Entity.is_international, lm.composite_score, lm.google_trend_score,
-               lm.news_mentions_7d, lm.lastfm_listeners, lm.data_completeness)
+               lm.news_mentions_7d, lm.lastfm_listeners, lm.data_completeness, lm.score_confidence, lm.signals_used)
         .join(lm, Entity.id == lm.entity_id)
-        .where(scope)
+        .where(scope, lm.composite_score.isnot(None))        # unrated entities are never ranked
         .order_by(desc(lm.composite_score), Entity.name)
         .limit(10)
     )
@@ -119,12 +119,13 @@ async def get_dashboard_summary(
             "international_acts": stats["international"],
             "domestic_acts": stats["domestic"],
             "avg_composite_score": stats["avg_score"],
+            "unrated_entities": stats["unrated"],
         },
         "trending_entities": [
             {
                 "id": str(r[0]), "name": r[1], "type": r[2], "category": r[3], "country": r[4],
                 "is_international": r[5] or False,
-                "composite_score": _f(r[6]),
+                **score_fields(r[6], r[11], r[12]),
                 "google_trend": r[7], "news_mentions_7d": r[8], "listeners": r[9],
                 "data_completeness": r[10],
             }
@@ -165,13 +166,6 @@ async def get_dashboard_alerts(
     lm = latest_metric()
     scope = market_clause(market)
 
-    breakout_stmt = (
-        select(Entity.name, Entity.category, lm.composite_score, lm.google_trend_score)
-        .join(lm, Entity.id == lm.entity_id)
-        .where(lm.google_trend_score.isnot(None), scope)
-        .order_by(desc(lm.google_trend_score), Entity.name)
-        .limit(3)
-    )
     news_stmt = (
         select(Entity.name, Entity.category, lm.news_mentions_7d)
         .join(lm, Entity.id == lm.entity_id)
@@ -185,17 +179,23 @@ async def get_dashboard_alerts(
         .order_by(City.music_market_size.desc(), City.name)
         .limit(2)
     )
-    breakout_rows, news_rows, gap_rows = await run_queries(breakout_stmt, news_stmt, gap_stmt)
+    news_rows, gap_rows = await run_queries(news_stmt, gap_stmt)
 
-    for name, cat, score, trend in breakout_rows:
-        if trend is not None and score is not None and trend > score:
-            gap = round(trend - score, 1)
-            alerts.append({
-                "type": "breakout",
-                "title": f"{name} showing breakout signals",
-                "message": f"Google Trend score ({trend:g}) exceeds composite ({score:.1f}) by +{gap} pts — strong upcoming demand.",
-                "entity": name, "category": cat, "severity": "high", "ts": now,
-            })
+    # "Rising attention" is measured, not inferred: real week-over-baseline Wikipedia pageview change that clears the
+    # baseline floor and the |robust z| >= 1.5 test (services/momentum.py). The old alert compared Google's 0-100
+    # query-relative number with the composite, which is not a demand signal.
+    try:
+        from app.services.momentum import momentum_for_market
+        mom = await momentum_for_market(db, scope, 2)
+    except Exception:  # noqa: BLE001  (table missing on an old DB: no alert rather than a 500)
+        mom = {"risers": []}
+    for r in mom["risers"]:
+        alerts.append({
+            "type": "breakout",
+            "title": f"{r['name']}: Wikipedia attention rising",
+            "message": f"{r['views_7d']:,} Wikipedia views last full week, {r['momentum_pct']:+.0f}% vs the prior 4-week average ({r['views_28d_avg_weekly']:,.0f}/week).",
+            "entity": r["name"], "category": r.get("category"), "severity": "high", "ts": now,
+        })
     for name, cat, news in news_rows:
         alerts.append({
             "type": "buzz", "title": f"{name} in the news",

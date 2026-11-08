@@ -1,0 +1,10 @@
+{
+  "_note": "Recorded/hand-copied shapes of Wikidata P27 statements + descriptions used by classify_nationality tests",
+  "atif_aslam": {"description": "Pakistani playback singer and songwriter", "P27": [{"qid": "Q668", "label": "India"}], "P495": [], "P17": []},
+  "kshmr": {"description": "American DJ and record producer", "P27": [{"qid": "Q30", "label": "United States"}, {"qid": "Q668", "label": "India"}], "P495": [], "P17": []},
+  "arijit": {"description": "Indian singer", "P27": [{"qid": "Q668", "label": "India"}], "P495": [], "P17": []},
+  "russell_peters": {"description": "Canadian stand-up comedian", "P27": [{"qid": "Q16", "label": "Canada"}], "P495": [], "P17": []},
+  "prophec": {"description": "Indian rapper", "P27": [], "P495": [{"qid": "Q668", "label": "India"}], "P17": []},
+  "mumbai_indians": {"description": "cricket team", "P27": [], "P495": [], "P17": [{"qid": "Q668", "label": "India"}]},
+  "unknown": {"description": null, "P27": [], "P495": [], "P17": []}
+}

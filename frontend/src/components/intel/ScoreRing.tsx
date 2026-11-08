@@ -23,10 +23,16 @@ export function ScoreRing({ score, size = 96, stroke = 7, label = true }: { scor
       </svg>
       {label && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>
-          <span className="num-rounded" style={{ fontSize: size * 0.32, fontWeight: 700, letterSpacing: '-0.04em', color: score != null ? color : 'var(--text-tertiary)' }}>
-            <Tick value={score} />
-          </span>
-          <span className="t-caption text-tertiary" style={{ fontSize: Math.max(9, size * 0.11), marginTop: 2 }}>/100</span>
+          {score != null ? (
+            <>
+              <span className="num-rounded" style={{ fontSize: size * 0.32, fontWeight: 700, letterSpacing: '-0.04em', color: color }}>
+                <Tick value={score} />
+              </span>
+              <span className="t-caption text-tertiary" style={{ fontSize: Math.max(9, size * 0.11), marginTop: 2 }}>/100</span>
+            </>
+          ) : (
+            <span className="text-tertiary" style={{ fontSize: Math.max(11, size * 0.15), fontWeight: 500 }}>Unrated</span>
+          )}
         </div>
       )}
     </div>

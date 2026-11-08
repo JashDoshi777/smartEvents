@@ -1,5 +1,7 @@
 'use client';
 
+import { ScoreValue, ConfidenceTag } from '@/components/intel/ScoreCue';
+import { verifiedNote } from '@/lib/provenance';
 import { useState } from 'react';
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
@@ -93,9 +95,9 @@ export default function ExecutivePage() {
                 </Ring>
               </div>
               {hs && <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <StackBar parts={[{ label: 'Strong', value: hs.strong, color: 'var(--accent)' }, { label: 'Good', value: hs.good, color: 'var(--text-secondary)' }, { label: 'Needs data', value: hs.needs_data, color: 'var(--fill-tertiary)' }, { label: 'Weak', value: hs.weak, color: 'var(--text-tertiary)' }]} />
+                <StackBar parts={[{ label: 'Strong', value: hs.strong, color: 'var(--accent)' }, { label: 'Good', value: hs.good, color: 'var(--text-secondary)' }, { label: 'Unrated', value: hs.needs_data, color: 'var(--fill-tertiary)' }, { label: 'Weak', value: hs.weak, color: 'var(--text-tertiary)' }]} />
                 <div className={styles.legend}>
-                  {[['Strong', hs.strong, 'var(--accent)'], ['Good', hs.good, 'var(--text-secondary)'], ['Needs data', hs.needs_data, 'var(--fill-tertiary)'], ['Weak', hs.weak, 'var(--text-tertiary)']].map(([l, v, c]) => (
+                  {[['Strong', hs.strong, 'var(--accent)'], ['Good', hs.good, 'var(--text-secondary)'], ['Unrated', hs.needs_data, 'var(--fill-tertiary)'], ['Weak', hs.weak, 'var(--text-tertiary)']].map(([l, v, c]) => (
                     <span key={l as string} className={styles.legendRow}><span className={styles.dot} style={{ background: c as string }} /><span className="t-caption text-secondary">{l} {v}</span></span>
                   ))}
                 </div>
@@ -135,10 +137,10 @@ export default function ExecutivePage() {
                     <span className={styles.avatar}>{e.name.charAt(0).toUpperCase()}</span>
                     <div className={styles.info}>
                       <span className={`t-body ${styles.ellip}`} style={{ fontWeight: 500 }}>{e.name}</span>
-                      <span className={`t-footnote text-secondary ${styles.ellip}`}>{[e.category ?? e.type, e.health].filter(Boolean).join(' · ')}</span>
+                      <span className={`t-footnote text-secondary ${styles.ellip}`}>{[e.category ?? e.type, e.health, verifiedNote(e.signals_used)].filter(Boolean).join(' · ')}<ConfidenceTag confidence={e.score_confidence} signals={e.signals_used} /></span>
                     </div>
                     <div className={styles.bar}><motion.div className={styles.fill} initial={{ width: 0 }} animate={{ width: `${((e.composite_score ?? 0) / top) * 100}%` }} transition={{ duration: 0.8, delay: 0.1 + i * 0.04, ease: [0.22, 1, 0.36, 1] }} /></div>
-                    <span className="num-rounded t-headline" style={{ textAlign: 'right' }}>{e.composite_score ?? '—'}</span>
+                    <span className="num-rounded t-headline" style={{ textAlign: 'right' }}><ScoreValue score={e.composite_score} /></span>
                   </motion.div>
                 ))}
               </div>

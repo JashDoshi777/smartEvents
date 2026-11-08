@@ -38,6 +38,7 @@ class NewsAPIClient(BaseAPIClient):
         language: str = "en",
         sort_by: str = "relevancy",     # 'relevancy', 'popularity', 'publishedAt'
         page_size: int = 20,
+        in_title: bool = False,         # use qInTitle (headline must contain the query) instead of q
     ) -> Dict[str, Any]:
         """
         Search all news articles mentioning an entity.
@@ -48,7 +49,7 @@ class NewsAPIClient(BaseAPIClient):
         data = await self.get(
             "/everything",
             params={
-                "q": entity_name,
+                ("qInTitle" if in_title else "q"): entity_name,
                 "from": from_date,
                 "language": language,
                 "sortBy": sort_by,

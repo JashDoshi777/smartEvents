@@ -50,11 +50,11 @@ def test_parse_gdelt_dedupes_and_windows():
 
 
 async def test_gdelt_preferred_then_google_fallback_then_none():
-    with patch.object(nf, "_gdelt", AsyncMock(return_value=(12, False, ["t"]))), patch.object(nf, "_gnews", AsyncMock()) as g:
+    with patch.object(nf, "_gdelt", AsyncMock(return_value=(12, False, [f"Zakir Khan comedy special {i}" for i in range(12)]))), patch.object(nf, "_gnews", AsyncMock()) as g:
         r = await nf.fetch_news_mentions("Zakir Khan", "comedian")
         assert r.source == "gdelt" and r.count == 12
         g.assert_not_called()
-    with patch.object(nf, "_gdelt", AsyncMock(return_value=None)), patch.object(nf, "_gnews", AsyncMock(return_value=(7, False, []))):
+    with patch.object(nf, "_gdelt", AsyncMock(return_value=None)), patch.object(nf, "_gnews", AsyncMock(return_value=(7, False, [f"Other Name comedy show {i}" for i in range(7)]))):
         r = await nf.fetch_news_mentions("Other Name", "comedian")
         assert r.source == "google_news_rss" and r.count == 7
     with patch.object(nf, "_gdelt", AsyncMock(return_value=None)), patch.object(nf, "_gnews", AsyncMock(return_value=None)):

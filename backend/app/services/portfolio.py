@@ -2,7 +2,7 @@
 
 Definitions (identical everywhere):
   total_entities  = entities in the market scope
-  scored          = entities with a composite score (latest scored snapshot)
+  scored          = entities with a composite v3 score (latest scored snapshot); the rest are 'unrated' (NULL, not 0)
   avg_score       = mean of those latest scores (1 decimal)
   domestic        = market "india"  (Indian primary market, not international)
   international   = market "global" (everything else, incl. foreign acts touring India)
@@ -51,6 +51,7 @@ def stats_dict(row) -> dict:
     return {
         "total": total or 0,
         "scored": scored or 0,
+        "unrated": max((total or 0) - (scored or 0), 0),
         "avg_score": round(float(avg), 1) if avg is not None else None,
         "domestic": domestic or 0,
         "international": intl or 0,

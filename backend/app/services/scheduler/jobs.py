@@ -91,6 +91,15 @@ async def job_news_backfill() -> Dict[str, Any]:
     return await backfill_news_mentions(limit=int(os.environ.get("JOB_NEWS_BATCH", "30")))
 
 
+async def job_attention_refresh() -> Dict[str, Any]:
+    """Weekly: upsert the last 2 complete ISO weeks of Wikipedia pageviews into entity_attention_weekly and refresh
+    wikipedia_views_30d/_7d. Momentum (app/services/momentum.py) is computed on read, so nothing else to refresh."""
+    code, out = await run_script(["scripts/backfill_attention.py", "--weeks", "2"], timeout=3300)
+    _check(code, out, "backfill_attention")
+    m = re.search(r"weekly rows upserted:\s*(\d+)", out)
+    return {"rows": int(m.group(1)) if m else 0, "tail": out[-300:]}
+
+
 @dataclass(frozen=True)
 class JobSpec:
     name: str
@@ -109,4 +118,5 @@ JOBS: Dict[str, JobSpec] = {j.name: j for j in [
     JobSpec("social_listening", job_social_listening, "Rotating social-listening sweep (10 stalest entities)", {"minute": 20}, jitter=120, timeout=1500, lease_seconds=1600),
     JobSpec("wikidata_enrichment", job_wikidata_enrichment, "Wikidata/Wikipedia enrichment of newly added entities", {"day_of_week": "sun", "hour": 3, "minute": 0}),
     JobSpec("news_backfill", job_news_backfill, "Keyless news mentions (GDELT / Google News) for entities with NULL news_mentions_7d", {"hour": 3, "minute": 30}, timeout=3000, lease_seconds=3200),
+    JobSpec("attention_refresh", job_attention_refresh, "Weekly Wikipedia pageview history (last 2 ISO weeks) -> entity_attention_weekly; momentum derives from it", {"day_of_week": "mon", "hour": 6, "minute": 0}, timeout=3400, lease_seconds=3500),
 ]}

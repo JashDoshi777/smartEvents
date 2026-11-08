@@ -18,7 +18,8 @@ import { useToast } from '@/components/ui/Toast';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { ScoreRing } from '@/components/intel/ScoreRing';
 import { verdictFor, typeLabel, initials, useScopedPortfolio } from '@/components/intel/entity-utils';
-import { sourcesNote } from '@/lib/provenance';
+import { sourcesNote, verifiedNote, describeSignals } from '@/lib/provenance';
+import { ScoreValue, ConfidenceTag } from '@/components/intel/ScoreCue';
 import { getWatchlist, addToWatchlist, removeFromWatchlist, getEntityScore, getEntityCities, compareEntities, PortfolioEntity } from '@/lib/api';
 import { compact, num, dateIN } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
@@ -68,12 +69,16 @@ function EntityDetail({ entity, watched, onToggleWatch, onCompare, onClose, inSh
   const score = useSWR(['entity-score', entity.id], () => getEntityScore(entity.id));
   const cities = useSWR(['entity-cities', entity.id], () => getEntityCities(entity.id));
   const s = score.data?.signals;
-  const composite = score.data?.composite_score ?? entity.composite_score;
+  const composite = score.data ? score.data.composite_score : entity.composite_score;
   const v = verdictFor(composite);
+  const confidence = score.data?.score_confidence ?? entity.score_confidence;
+  const signalsUsed = score.data?.signals_used ?? entity.signals_used;
+  const [whyOpen, setWhyOpen] = useState(false);
+  const lines = describeSignals({ validity: score.data?.signal_validity, entityType: entity.type, signalsUsed, trendsBasis: s?.google_trend_basis, newsConfidence: s?.news_confidence, wikiViews: s?.wikipedia_views_30d });
   const topCities = (cities.data?.cities ?? []).slice(0, 5);
 
   const bars: { label: string; value: number | null | undefined; text: string }[] = [
-    { label: 'Composite score', value: composite, text: composite != null ? composite.toFixed(1) : '—' },
+    { label: 'Composite score', value: composite, text: composite != null ? composite.toFixed(1) : 'Unrated' },
     { label: 'Search interest', value: s?.google_trend_score ?? entity.google_trend_score, text: (s?.google_trend_score ?? entity.google_trend_score) != null ? String(s?.google_trend_score ?? entity.google_trend_score) : '—' },
     { label: 'Data completeness', value: s?.data_completeness != null ? s.data_completeness * (s.data_completeness <= 1 ? 100 : 1) : null,
       text: s?.data_completeness != null ? `${Math.round(s.data_completeness * (s.data_completeness <= 1 ? 100 : 1))}%` : '—' },
@@ -100,6 +105,7 @@ function EntityDetail({ entity, watched, onToggleWatch, onCompare, onClose, inSh
         <div style={{ minWidth: 0 }}>
           <p className={k.trail} style={{ color: 'var(--text-primary)', fontSize: '1.0625rem', fontWeight: 600 }}><i className={`${k.dot} ${v.tone === 'accent' ? k.dotOn : ''}`} />{v.label}</p>
           <p className="t-footnote text-secondary" style={{ marginTop: 4, lineHeight: 1.45 }}>{v.blurb}</p>
+          <p className="t-caption text-tertiary" style={{ marginTop: 6 }}>{composite != null ? verifiedNote(signalsUsed) : null}<ConfidenceTag confidence={composite != null ? confidence : null} signals={signalsUsed} />{(composite != null && verifiedNote(signalsUsed)) || (composite != null && confidence != null && confidence < 0.5) ? ' · ' : ''}<button type="button" className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)', padding: 0, minHeight: 0 }} onClick={() => setWhyOpen(true)} data-testid="signal-info">How is this scored?</button></p>
         </div>
       </div>
 
@@ -122,7 +128,9 @@ function EntityDetail({ entity, watched, onToggleWatch, onCompare, onClose, inSh
                 ['Last.fm listeners', compact(s?.lastfm_listeners)], ['YouTube subscribers', compact(s?.youtube_subscribers)],
                 ['YouTube views (30d)', compact(s?.youtube_views_30d)], ['News mentions (7d)', s?.news_mentions_7d != null ? num(s.news_mentions_7d) : '—'],
               ].map(([lab, val]) => <div key={lab} className={k.kvRow}><span>{lab}</span><span className="num-rounded">{val}</span></div>)}
-              {sourcesNote(score.data?.data_completeness ?? s?.data_completeness) && <p className="t-caption text-tertiary" style={{ padding: '8px 16px 0' }} data-testid="sources-note">{sourcesNote(score.data?.data_completeness ?? s?.data_completeness)}. The score renormalises over the sources that answered.</p>}
+              {composite != null && verifiedNote(signalsUsed)
+                ? <p className="t-caption text-tertiary" style={{ padding: '8px 16px 0' }} data-testid="sources-note">{verifiedNote(signalsUsed)}. The score is weighted over those sources only.</p>
+                : sourcesNote(score.data?.data_completeness ?? s?.data_completeness) && <p className="t-caption text-tertiary" style={{ padding: '8px 16px 0' }} data-testid="sources-note">{sourcesNote(score.data?.data_completeness ?? s?.data_completeness)}. The score renormalises over the sources that answered.</p>}
             </>
           )}
         </div>
@@ -143,6 +151,19 @@ function EntityDetail({ entity, watched, onToggleWatch, onCompare, onClose, inSh
         </div>
       </div>
 
+      {whyOpen && (
+        <Sheet open onClose={() => setWhyOpen(false)} title="Signal checks">
+          <p className="t-footnote text-secondary" style={{ marginBottom: 10 }}>Only signals proven to be about this entity feed the score.{composite == null ? ' This one has too few, so it stays unrated.' : ''}</p>
+          <div className={styles.inset}>
+            {lines.map(l => (
+              <div key={l.key} className={k.kvRow} style={{ alignItems: 'flex-start' }}>
+                <span style={{ color: 'var(--text-primary)', minWidth: 96 }}>{l.label}</span>
+                <span className="text-secondary" style={{ flex: 1, textAlign: 'right' }}>{l.text}{l.used ? ' · used' : ''}</span>
+              </div>
+            ))}
+          </div>
+        </Sheet>
+      )}
       <p className="t-caption text-tertiary">Updated {dateIN(score.data?.last_updated ?? entity.last_updated)}{score.data?.data_sources?.length ? ` · ${score.data.data_sources.slice(0, 4).join(', ')}` : ''}</p>
 
       <div className={styles.actions}>
@@ -161,7 +182,7 @@ function EntityDetail({ entity, watched, onToggleWatch, onCompare, onClose, inSh
 function CompareSheet({ ids, onClose }: { ids: string[]; onClose: () => void }) {
   const { data, error, isLoading, mutate: retry } = useSWR(ids.length >= 2 ? ['compare', ...ids] : null, () => compareEntities(ids));
   const rows: [string, (p: NonNullable<typeof data>['entities'][number]) => string][] = [
-    ['Score', p => (p.composite_score != null ? String(p.composite_score) : '—')],
+    ['Score', p => (p.composite_score != null ? String(p.composite_score) : 'Unrated')],
     ['Trend', p => (p.trend_direction === 'pending' ? '—' : p.trend_direction)],
     ['Listeners', p => compact(p.listeners)],
     ['Category', p => p.category ?? '—'],
@@ -274,7 +295,7 @@ function Hub() {
     { label: isIndia ? 'India tracked' : 'Global tracked', value: num(scoped.length), raw: scoped.length },
     { label: 'Sign-ready', value: num(scored.filter(e => (e.composite_score ?? 0) >= 70).length), raw: scored.filter(e => (e.composite_score ?? 0) >= 70).length },
     { label: 'Average score', value: avg != null ? avg.toFixed(1) : '—', raw: avg, dec: 1 },
-    { label: 'Needs data', value: num(scoped.length - scored.length), raw: scoped.length - scored.length },
+    { label: 'Unrated', value: num(scoped.length - scored.length), raw: scoped.length - scored.length },
   ];
 
   function pick(e: PortfolioEntity) {
@@ -341,7 +362,7 @@ function Hub() {
                       <span className={k.sub}>{e.category ?? typeLabel(e.type)} · {typeLabel(e.type)}</span>
                     </span>
                     <span className={styles.badge}><VerdictText score={e.composite_score} /></span>
-                    <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.0625rem', minWidth: 44, justifyContent: 'flex-end' }}>{e.composite_score != null ? e.composite_score.toFixed(1) : '—'}</span>
+                    <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.0625rem', minWidth: 44, justifyContent: 'flex-end' }}><ScoreValue score={e.composite_score} /></span>
                     {!compareMode && <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />}
                   </button>
                 );

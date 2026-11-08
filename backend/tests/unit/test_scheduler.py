@@ -47,7 +47,8 @@ def test_build_scheduler_registers_all_jobs_non_overlapping():
         assert j.max_instances == 1
         assert j.coalesce is True
         assert j.trigger.jitter and j.trigger.jitter > 0
-    assert {"entity_metrics", "free_signals", "district_events", "social_listening", "wikidata_enrichment", "news_backfill"} <= set(jobs)
+    assert {"entity_metrics", "free_signals", "district_events", "social_listening", "wikidata_enrichment", "news_backfill", "attention_refresh"} <= set(jobs)
+    assert JOBS["attention_refresh"].cron["day_of_week"] == "mon"
 
 
 def test_eval_counts_parser():

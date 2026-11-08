@@ -6,7 +6,7 @@ One row per entity per collection cycle (~6 hours).
 
 from datetime import datetime
 from sqlalchemy import (
-    Column, Float, Integer, BigInteger, ForeignKey,
+    Column, Float, Integer, BigInteger, ForeignKey, Text,
     String, Index, PrimaryKeyConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP, JSONB
@@ -55,6 +55,10 @@ class EntityMetric(Base):
     google_trend_score = Column(Float)              # 0-100, normalized
     google_trend_delta_7d = Column(Float)           # Change vs 7 days ago
     google_trend_delta_30d = Column(Float)          # Change vs 30 days ago
+    # Anchor-normalised Google Trends (legacy google_trend_score above is query-relative, NOT a popularity level)
+    google_trend_relative = Column(Float)           # entity mean / anchor mean (same request group), geo=IN
+    google_trend_topic = Column(Text)               # Knowledge Graph topic id used ('/m/..') or the plain term
+    google_trend_basis = Column(String(10))         # 'topic' | 'term' | 'none'
 
     # ─── Events & Live Metrics ─────────────────────────────────
     bandsintown_rsvps = Column(Integer)             # Event RSVPs on Bandsintown
@@ -72,9 +76,14 @@ class EntityMetric(Base):
     # ─── News & Press ──────────────────────────────────────────
     news_mentions_7d = Column(Integer)
     news_sentiment_7d = Column(Float)               # Avg sentiment of news articles
+    news_confidence = Column(String(30))            # 'strict' | 'generic_filtered' | 'ambiguous_skipped'
+    news_sample_titles = Column(JSONB)              # up to 3 matching headlines (audit)
 
     # ─── Composite Scores (Computed) ───────────────────────────
     composite_score = Column(Float)                 # 0-100, LiveIQ score
+    score_confidence = Column(Float)                # 0-1 (v3): available weight share x verification factor
+    signals_used = Column(JSONB)                    # v3: list of valid signals the score was built from
+    score_version = Column(String(10))              # 'v3'; NULL on legacy v2 rows
     trend_velocity = Column(Float)                  # Change in composite score (7d)
     demand_score = Column(Float)                    # 0-100, booking demand signal
     risk_score = Column(Float)                      # 0-100, booking risk (lower = safer)
@@ -84,6 +93,7 @@ class EntityMetric(Base):
     wikipedia_views_30d = Column(BigInteger)        # en+hi Wikipedia user pageviews, trailing 30 days
     wikipedia_views_7d = Column(BigInteger)
     signal_provenance = Column(JSONB)               # {signal: {source, retrieved, as_of, id}}
+    signal_validity = Column(JSONB)                 # {lastfm|youtube|trends|news|wiki: verdict}; see services/entity_identity.py
 
     # ─── Metadata ──────────────────────────────────────────────
     data_completeness = Column(Float)               # 0-1, how many signals were available

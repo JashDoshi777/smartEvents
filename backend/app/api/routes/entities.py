@@ -25,7 +25,7 @@ from app.models.entity import Entity, EntityType
 from app.models.metrics import EntityMetric
 from app.models.city import City
 from app.api.deps import get_current_user
-from app.services.latest_metric import latest_metric, trend_direction
+from app.services.latest_metric import latest_metric, score_fields, trend_direction
 from app.services.market_scope import Market, market_clause
 from app.models.user import User
 
@@ -240,9 +240,15 @@ async def get_entity_score(
         return {
             "entity_id": entity_id,
             "entity_name": entity.name,
-            "composite_score": round(metric.composite_score, 1) if metric.composite_score is not None else None,
+            **score_fields(metric.composite_score, metric.score_confidence, metric.signals_used),
+            "score_version": metric.score_version,
+            "signal_validity": metric.signal_validity,
             "trend_direction": trend_direction(metric.trend_velocity),
             "signals": {
+                "wikipedia_views_30d": metric.wikipedia_views_30d,
+                "google_trend_relative": metric.google_trend_relative,
+                "google_trend_basis": metric.google_trend_basis,
+                "news_confidence": metric.news_confidence,
                 "lastfm_listeners": metric.lastfm_listeners,
                 "youtube_subscribers": metric.youtube_subscribers,
                 "youtube_views_30d": metric.youtube_views_30d,
@@ -259,7 +265,8 @@ async def get_entity_score(
     return {
         "entity_id": entity_id,
         "entity_name": entity.name,
-        "composite_score": None,
+        **score_fields(None),
+        "signal_validity": None,
         "trend_direction": "pending",
         "signals": {},
         "data_completeness": None,
@@ -386,7 +393,8 @@ async def compare_entities(
         metric = metrics.get(uid)
         profiles.append({
             **_entity_to_profile(entity),
-            "composite_score": round(metric.composite_score, 1) if metric and metric.composite_score is not None else None,
+            **score_fields(metric.composite_score if metric else None, metric.score_confidence if metric else None,
+                           metric.signals_used if metric else None),
             "trend_direction": trend_direction(metric.trend_velocity) if metric else "pending",
             "listeners": (metric.lastfm_listeners or metric.spotify_monthly_listeners) if metric else None,
             "data_completeness": metric.data_completeness if metric else None,

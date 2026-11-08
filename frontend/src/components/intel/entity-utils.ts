@@ -12,7 +12,7 @@ export type Verdict = { label: string; tone: 'accent' | 'neutral'; color: string
 
 /** Transparent, score-only verdict (same bands as the Sign / Consider / Pass model). */
 export function verdictFor(s: number | null | undefined): Verdict {
-  if (s == null) return { label: 'No data', tone: 'neutral', color: 'var(--text-tertiary)', blurb: 'No metrics collected yet. The entity worker refreshes scores every few hours.' };
+  if (s == null) return { label: 'Unrated', tone: 'neutral', color: 'var(--text-tertiary)', blurb: 'Not enough verified data. A score needs at least two verified sources, one of them YouTube or Wikipedia.' };
   if (s >= 70) return { label: 'Sign now', tone: 'accent', color: 'var(--accent)', blurb: 'Top-tier composite score with strong momentum. Worth fast-tracking a deal.' };
   if (s >= 50) return { label: 'Strong candidate', tone: 'accent', color: 'var(--accent)', blurb: 'Healthy score. Negotiate terms and target Tier-1 cities with mid-size venues.' };
   if (s >= 35) return { label: 'Watch', tone: 'neutral', color: 'var(--text-secondary)', blurb: 'Moderate momentum. Monitor for a few weeks before committing.' };

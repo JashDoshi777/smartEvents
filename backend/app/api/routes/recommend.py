@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, run_queries
 from app.core.sql import ilike_contains
-from app.services.latest_metric import latest_metric, trend_direction
+from app.services.latest_metric import latest_metric, score_fields, trend_direction
 from app.services.market_scope import Market, market_clause
 from app.models.entity import Entity
 from app.models.city import City
@@ -134,9 +134,10 @@ async def recommend_entities(
     stmt = (
         select(Entity.id.label("eid"), Entity.name.label("ename"), Entity.entity_type.label("etype"),
                Entity.category.label("ecat"), Entity.is_international.label("eintl"),
-               lm.composite_score, lm.trend_velocity, lm.time, lm.data_completeness)
+               lm.composite_score, lm.trend_velocity, lm.time, lm.data_completeness,
+               lm.score_confidence, lm.signals_used)
         .join(lm, Entity.id == lm.entity_id)
-        .where(market_clause(market))
+        .where(market_clause(market), lm.composite_score.isnot(None))   # unrated entities are never recommended
     )
     if category:
         stmt = stmt.where(ilike_contains(Entity.category, category))
@@ -176,7 +177,7 @@ async def recommend_entities(
             "entity_type": metric.etype,
             "category": metric.ecat,
             "is_international": metric.eintl or False,
-            "composite_score": round(composite, 1),
+            **score_fields(composite, metric.score_confidence, metric.signals_used),
             "city_demand_score": round(city_demand, 1) if city_demand is not None else None,
             "recommendation_score": round(blended, 1),
             "trend_direction": trend_direction(metric.trend_velocity),
@@ -269,7 +270,7 @@ async def recommend_sign(
 
     if not has_real_metrics:
         verdict = "insufficient_data"
-        reasons.append("No collected intelligence metrics for this entity yet — score defaulted to a neutral baseline, not a real signal.")
+        reasons.append("Not enough verified data to score this entity (needs >= 2 verified signals incl. YouTube or Wikipedia) — a neutral baseline was used for the model, it is not a real signal.")
     elif predicted_fill_rate >= 75 and composite_score >= 60:
         verdict = "sign"
         reasons.append(f"Predicted fill rate {predicted_fill_rate:.0f}% and composite score {composite_score:.0f}/100 both clear the sign threshold (>=75% fill, >=60 score).")

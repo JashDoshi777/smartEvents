@@ -43,20 +43,15 @@ def _note_rate_limit(exc: BaseException) -> bool:
 
 
 async def _fetch_lastfm_metrics(entity: Dict[str, Any]) -> Dict[str, Any]:
-    """Fetch Last.fm metrics for one entity."""
-    entity_name = entity["name"]
-
-    # Try exact name first, fall back to search if no mbid stored
-    async with LastFMClient() as client:
-        results = await client.search_artist(entity_name, limit=1)
-
-    if not results:
+    """Last.fm metrics for one entity — ONLY for artists whose Last.fm identity was verified (signal_validity.lastfm in
+    verified_mbid / name_verified_tags). Never applied to teams/films/etc. and never a blind top-search-result match:
+    the Last.fm page name recorded by the verifier is looked up directly."""
+    if entity.get("entity_type") != "artist":
         return {}
-
-    top_result = results[0]
-    matched_name = top_result.get("name", entity_name)
-
-    # Fetch full profile with the matched name
+    sv = entity.get("signal_validity") or {}
+    if sv.get("lastfm") not in ("verified_mbid", "name_verified_tags"):
+        return {}
+    matched_name = (sv.get("lastfm_detail") or {}).get("lastfm_name") or entity["name"]
     async with LastFMClient() as client:
         artist = await client.get_artist_info(matched_name)
 
@@ -70,18 +65,15 @@ async def _fetch_lastfm_metrics(entity: Dict[str, Any]) -> Dict[str, Any]:
 
 
 async def _fetch_youtube_metrics(entity: Dict[str, Any]) -> Dict[str, Any]:
-    """Fetch YouTube channel metrics for one entity."""
+    """YouTube channel metrics — only for a channel whose identity is VERIFIED (signal_validity.youtube starts with
+    'verified_'); the id comes from the verifier / recovery scripts. No name search is ever performed."""
+    sv = entity.get("signal_validity") or {}
+    if not str(sv.get("youtube") or "").startswith("verified_"):
+        return {}
     external_ids = entity.get("external_ids", {})
-    channel_id = external_ids.get("youtube_channel_id")
-
+    channel_id = (sv.get("youtube_detail") or {}).get("channel_id") or external_ids.get("youtube_channel_id")
     if not channel_id:
-        async with YouTubeClient() as client:
-            channels = await client.search_channel(entity["name"], max_results=1)
-        if not channels:
-            return {}
-        channel_id = channels[0].get("youtube_channel_id")
-        if not channel_id:
-            return {}
+        return {}
 
     async with YouTubeClient() as client:
         stats = await client.get_channel_stats(channel_id)
@@ -124,10 +116,15 @@ async def _fetch_news_free(entity: Optional[Dict[str, Any]], entity_name: str) -
     """Keyless fallback (GDELT / Google News RSS). None when no source answered."""
     from app.services.ingestion.news_free_client import fetch_news_mentions
     e = entity or {}
-    res = await fetch_news_mentions(entity_name, e.get("entity_type"), e.get("category"), bool(e.get("is_international")))
+    from app.services.news_filter import disambiguator_of
+    ext = e.get("external_ids") or {}
+    res = await fetch_news_mentions(entity_name, e.get("entity_type"), e.get("category"), bool(e.get("is_international")),
+                                    disambiguator=disambiguator_of(ext.get("wikipedia_title")),
+                                    aliases=e.get("name_aliases") or [])
     if res is None:
         return None
-    return {"news_mentions_7d": res.count, "news_source": res.provenance()}
+    return {"news_mentions_7d": res.count, "news_source": res.provenance(), "news_confidence": res.confidence,
+            "news_sample_titles": res.sample_titles}
 
 
 async def _fetch_news_metrics(entity_name: str, entity: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -138,13 +135,23 @@ async def _fetch_news_metrics(entity_name: str, entity: Optional[Dict[str, Any]]
     newsapi: Optional[Dict[str, Any]] = None
     if _time.monotonic() >= _NEWSAPI_COOLDOWN_UNTIL:
         try:
+            from app.services.news_filter import disambiguator_of, filter_titles, usable_aliases
+            ext = (entity or {}).get("external_ids") or {}
+            al = usable_aliases(entity_name, (entity or {}).get("name_aliases") or [])[:4]
+            q_names = " OR ".join(f'"{n}"' for n in [entity_name, *al])
             async with NewsAPIClient() as client:
-                news = await client.search_entity_news(entity_name, days_back=7, page_size=10)
+                news = await client.search_entity_news(q_names, days_back=7, page_size=100, in_title=True)
                 controversy = await client.search_controversy(entity_name, days_back=30)
+            fr = filter_titles([a.get("title") for a in news.get("articles", [])], entity_name,
+                               (entity or {}).get("entity_type"), (entity or {}).get("category"),
+                               disambiguator_of(ext.get("wikipedia_title")), al)
             newsapi = {
-                "news_mentions_7d": news.get("total_results", 0),
+                "news_mentions_7d": fr.count,
+                "news_confidence": fr.confidence,
+                "news_sample_titles": fr.sample_titles,
                 "controversy_risk": controversy.get("risk_level", "low"),
-                "news_source": {"source": "newsapi", "retrieved": datetime.utcnow().date().isoformat(), "window_days": 7},
+                "news_source": {"source": "newsapi", "retrieved": datetime.utcnow().date().isoformat(), "window_days": 7,
+                                "confidence": fr.confidence, "note": "qInTitle, title filtered (full name + context term), max 100 articles"},
             }
         except Exception as exc:  # noqa: BLE001
             if _note_rate_limit(exc):
@@ -153,8 +160,14 @@ async def _fetch_news_metrics(entity_name: str, entity: Optional[Dict[str, Any]]
     if newsapi and newsapi["news_mentions_7d"]:
         return newsapi
     free = await _fetch_news_free(entity, entity_name)
-    if free is not None and (free["news_mentions_7d"] or not newsapi):
-        return {**(newsapi or {}), **free} if newsapi else free
+    if free is not None and free["news_mentions_7d"]:
+        return {**(newsapi or {}), **free}
+    # nothing positive from either source: a generic-name 'ambiguous_skipped' (NULL) beats a possibly-wrong 0
+    for cand in (newsapi, free):
+        if cand and cand.get("news_confidence") == "ambiguous_skipped":
+            return {**(newsapi or {}), **cand}
+    if free is not None:
+        return {**(newsapi or {}), **free}
     return newsapi or {}
 
 
@@ -167,6 +180,8 @@ async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
     entity_id = entity["id"]
     log = logger.bind(entity=entity_name, entity_id=str(entity_id))
     log.info("Starting metric collection")
+    prev = await _load_previous_context(entity_id)
+    entity = {**entity, "signal_validity": prev.get("signal_validity")}
 
     # Run first two concurrently (different APIs — no shared rate limits)
     lastfm_result, youtube_result = await asyncio.gather(
@@ -216,9 +231,16 @@ async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
     metrics["data_completeness"] = len(data_sources) / 4.0
     metrics["data_sources"] = data_sources
 
-    # Compute composite score
-    composite_score = _compute_composite_score(metrics)
-    metrics["composite_score"] = composite_score
+    # Slow-moving signals that other jobs collect (Wikipedia views, anchored Google Trends) are carried forward from the
+    # entity's previous row (real observed values; provenance copied) so a worker snapshot is scored on the same evidence.
+    for k in ("wikipedia_views_30d", "wikipedia_views_7d", "google_trend_relative", "google_trend_topic", "google_trend_basis"):
+        if metrics.get(k) is None and prev.get(k) is not None:
+            metrics[k] = prev[k]
+    metrics["signal_validity"] = prev.get("signal_validity")
+    metrics["carried_provenance"] = prev.get("carried_provenance")
+    v3 = _compute_v3(entity.get("entity_type"), metrics)
+    composite_score = v3["score"]
+    metrics.update(composite_score=composite_score, score_confidence=v3["confidence"], signals_used=v3["signals_used"])
     metrics["trend_direction"] = _compute_trend_direction(metrics)
 
     # Write to PostgreSQL
@@ -231,6 +253,39 @@ async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
         composite_score=composite_score,
     )
     return metrics
+
+
+async def _load_previous_context(entity_id: Any) -> Dict[str, Any]:
+    """Newest verdicts + slow signals for the entity (None values when nothing stored)."""
+    from sqlalchemy import text
+    try:
+        async with AsyncSessionLocal() as session:
+            r = (await session.execute(text(
+                "select signal_validity, wikipedia_views_30d, wikipedia_views_7d, google_trend_relative, google_trend_topic, "
+                "google_trend_basis, signal_provenance from entity_metrics where entity_id = :e order by time desc limit 40"),
+                {"e": entity_id})).mappings().all()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("context load failed", error=str(exc))
+        return {}
+    out: Dict[str, Any] = {}
+    prov: Dict[str, Any] = {}
+    for row in r:                                   # newest first: first non-null of each wins
+        if out.get("signal_validity") is None and row["signal_validity"] is not None:
+            out["signal_validity"] = row["signal_validity"]
+        for k in ("wikipedia_views_30d", "wikipedia_views_7d", "google_trend_relative", "google_trend_topic", "google_trend_basis"):
+            if out.get(k) is None and row[k] is not None:
+                out[k] = row[k]
+                for pk in ("wikipedia_views_30d", "google_trend_relative"):
+                    if k == pk and (row["signal_provenance"] or {}).get(pk):
+                        prov[pk] = {**row["signal_provenance"][pk], "carried_forward": True}
+    out["carried_provenance"] = prov or None
+    return out
+
+
+def _compute_v3(entity_type: Optional[str], metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Composite v3 over verified signals only (see app/services/scoring/composite.py)."""
+    from app.services.scoring.composite import compute_composite_v3
+    return compute_composite_v3(entity_type, metrics, metrics.get("signal_validity"))
 
 
 def _compute_composite_score(metrics: Dict[str, Any]) -> Optional[float]:
@@ -272,11 +327,23 @@ async def _write_metric_to_db(entity_id: Any, metrics: Dict[str, Any]) -> None:
             google_trend_delta_7d=metrics.get("google_trend_delta_7d"),
             # News
             news_mentions_7d=metrics.get("news_mentions_7d"),
+            news_confidence=metrics.get("news_confidence"),
+            news_sample_titles=metrics.get("news_sample_titles"),
             # Computed
             composite_score=metrics.get("composite_score"),
+            score_confidence=metrics.get("score_confidence"),
+            signals_used=metrics.get("signals_used"),
+            score_version="v3",
+            wikipedia_views_30d=metrics.get("wikipedia_views_30d"),
+            wikipedia_views_7d=metrics.get("wikipedia_views_7d"),
+            google_trend_relative=metrics.get("google_trend_relative"),
+            google_trend_topic=metrics.get("google_trend_topic"),
+            google_trend_basis=metrics.get("google_trend_basis"),
+            signal_validity=metrics.get("signal_validity"),
             data_completeness=metrics.get("data_completeness"),
             collection_source="entity_metrics_worker",
-            signal_provenance=({"news_mentions_7d": metrics["news_source"]} if metrics.get("news_source") else None),
+            signal_provenance=({**(metrics.get("carried_provenance") or {}),
+                                **({"news_mentions_7d": metrics["news_source"]} if metrics.get("news_source") else {})} or None),
         )
         session.add(metric)
         try:
@@ -333,7 +400,7 @@ async def collect_entity_metrics_batch(limit: int = 60, chunk: int = 6, chunk_pa
         entities = [
             {"id": e.id, "name": e.name, "external_ids": e.external_ids or {},
              "entity_type": e.entity_type, "category": e.category,
-             "is_international": e.is_international}
+             "is_international": e.is_international, "name_aliases": list(e.name_aliases or [])}
             for e in res.scalars().all()
         ]
     if not entities:
@@ -403,6 +470,7 @@ async def _sync_all() -> Dict[str, Any]:
             "entity_type": e.entity_type,
             "category": e.category,
             "is_international": e.is_international,
+            "name_aliases": list(e.name_aliases or []),
         }
         for e in db_entities
     ]

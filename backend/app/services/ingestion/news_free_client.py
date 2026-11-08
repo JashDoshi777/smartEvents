@@ -74,10 +74,12 @@ def _clean_name(name: str) -> str:
 
 
 def build_query(name: str, entity_type: Optional[str], category: Optional[str] = None,
-                is_international: bool = False, source: str = "gdelt") -> str:
-    """Exact quoted name + context words (OR group). GDELT: + sourcecountry:IN for domestic entities."""
+                is_international: bool = False, source: str = "gdelt", aliases: Optional[List[str]] = None) -> str:
+    """Exact quoted name (OR up to 4 usable aliases) + context words (OR group). GDELT: + sourcecountry:IN for domestic entities."""
     ctx = " OR ".join(f'"{w}"' if " " in w or "-" in w else w for w in context_words(entity_type, category))
-    q = f'"{_clean_name(name)}" ({ctx})'
+    names = [_clean_name(name)] + [_clean_name(a) for a in (aliases or [])[:4]]
+    nm = f'"{names[0]}"' if len(names) == 1 else "(" + " OR ".join(f'"{n}"' for n in names) + ")"
+    q = f'{nm} ({ctx})'
     if source == "gdelt" and not is_international:
         q += " sourcecountry:IN"
     return q
@@ -91,23 +93,25 @@ def _norm_title(t: str) -> str:
 
 @dataclass
 class NewsResult:
-    count: int
+    count: Optional[int]
     source: str                      # 'gdelt' | 'google_news_rss'
     query: str
     capped: bool
     retrieved: str
     window_days: int = 7
     sample_titles: List[str] = field(default_factory=list)
+    confidence: Optional[str] = None          # 'strict' | 'generic_filtered' | 'ambiguous_skipped' (count None)
 
     def provenance(self) -> Dict[str, Any]:
         return {"source": self.source, "query": self.query, "retrieved": self.retrieved,
                 "window_days": self.window_days, "capped": self.capped,
-                "note": "distinct articles matching contextual exact-name query; keyless (not NewsAPI)"}
+                "confidence": self.confidence,
+                "note": "distinct articles whose TITLE contains the full name + a type context term; keyless (not NewsAPI)"}
 
 
 # ── parsing (pure, unit-tested against recorded fixtures) ─────────────────────
 
-def parse_gdelt(payload: Any, days: int = 7, now: Optional[datetime] = None) -> Optional[tuple[int, bool, List[str]]]:
+def parse_gdelt(payload: Any, days: int = 7, now: Optional[datetime] = None, all_titles: bool = False) -> Optional[tuple[int, bool, List[str]]]:
     """GDELT ArtList JSON -> (distinct articles, capped, sample titles). None if the payload is not a result object."""
     if not isinstance(payload, dict):
         return None
@@ -128,11 +132,11 @@ def parse_gdelt(payload: Any, days: int = 7, now: Optional[datetime] = None) -> 
         k = _norm_title(a.get("title") or a.get("url") or "")
         if k and k not in seen:
             seen.add(k)
-            titles.append((a.get("title") or "")[:120])
-    return len(seen), len(arts) >= 250, titles[:5]
+            titles.append((a.get("title") or "")[:200])
+    return len(seen), len(arts) >= 250, (titles if all_titles else titles[:5])
 
 
-def parse_google_rss(xml_text: str, days: int = 7, now: Optional[datetime] = None) -> Optional[tuple[int, bool, List[str]]]:
+def parse_google_rss(xml_text: str, days: int = 7, now: Optional[datetime] = None, all_titles: bool = False) -> Optional[tuple[int, bool, List[str]]]:
     try:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError:
@@ -154,8 +158,8 @@ def parse_google_rss(xml_text: str, days: int = 7, now: Optional[datetime] = Non
         k = _norm_title(title)
         if k and k not in seen:
             seen.add(k)
-            titles.append(title[:120])
-    return len(seen), len(items) >= 100, titles[:5]
+            titles.append(title[:200])
+    return len(seen), len(items) >= 100, (titles if all_titles else titles[:5])
 
 
 # ── cache + politeness ────────────────────────────────────────────────────────
@@ -207,7 +211,7 @@ async def _gdelt(query: str, days: int) -> Optional[tuple[int, bool, List[str]]]
     parsed = None
     if r is not None and r.status_code == 200:
         try:
-            parsed = parse_gdelt(r.json(), days)
+            parsed = parse_gdelt(r.json(), days, all_titles=True)
         except ValueError:      # plain-text throttle / error message instead of JSON
             parsed = None
     if parsed is None:
@@ -221,30 +225,45 @@ async def _gnews(query: str, days: int) -> Optional[tuple[int, bool, List[str]]]
                           GNEWS_MIN_GAP, 20.0)
     if r is None or r.status_code != 200:
         return None
-    return parse_google_rss(r.text, days)
+    return parse_google_rss(r.text, days, all_titles=True)
 
 
 async def fetch_news_mentions(name: str, entity_type: Optional[str] = None, category: Optional[str] = None,
-                              is_international: bool = False, days: int = 7) -> Optional[NewsResult]:
-    """Distinct-article count for the last `days` days, or None when no keyless source answered."""
-    gq = build_query(name, entity_type, category, is_international, "gdelt")
-    nq = build_query(name, entity_type, category, is_international, "gnews")
-    key = hashlib.sha1(f"{gq}|{days}".encode()).hexdigest()
+                              is_international: bool = False, days: int = 7,
+                              disambiguator: Optional[str] = None, aliases: Optional[List[str]] = None) -> Optional[NewsResult]:
+    """Homonym-filtered distinct-article count (title must contain the full name + a context term; see news_filter).
+    count is None with confidence 'ambiguous_skipped' for generic names where nothing passed; the whole result is
+    None when no keyless source answered."""
+    from app.services.news_filter import filter_titles, usable_aliases
+    aliases = usable_aliases(name, aliases)
+    gq = build_query(name, entity_type, category, is_international, "gdelt", aliases)
+    nq = build_query(name, entity_type, category, is_international, "gnews", aliases)
+    key = hashlib.sha1(f"v3|{gq}|{days}|{disambiguator}".encode()).hexdigest()
     hit = _cache_get(key)
     if hit:
         return NewsResult(**hit)
     today = datetime.now(timezone.utc).date().isoformat()
 
+    def _f(titles):
+        return filter_titles(titles, name, entity_type, category, disambiguator, aliases)
+
     result: Optional[NewsResult] = None
     g = await _gdelt(gq, days)
-    if g and g[0] > 0:
-        result = NewsResult(g[0], "gdelt", gq, g[1], today, days, g[2])
+    fg = _f(g[2]) if g else None
+    if fg and fg.count:
+        result = NewsResult(fg.count, "gdelt", gq, g[1], today, days, fg.sample_titles, fg.confidence)
     else:
         n = await _gnews(nq, days)
-        if n and (n[0] > 0 or g is None):
-            result = NewsResult(n[0], "google_news_rss", nq, n[1], today, days, n[2])
-        elif g is not None:                       # GDELT answered with a genuine 0, Google had nothing / failed
-            result = NewsResult(0, "gdelt", gq, False, today, days, [])
+        fn = _f(n[2]) if n else None
+        if fn and fn.count:
+            result = NewsResult(fn.count, "google_news_rss", nq, n[1], today, days, fn.sample_titles, fn.confidence)
+        else:
+            answered = [(src, q, f) for src, q, f in (("gdelt", gq, fg), ("google_news_rss", nq, fn)) if f is not None]
+            if answered:
+                src, q, f = answered[0]
+                skipped = any(x[2].confidence == "ambiguous_skipped" for x in answered)
+                result = NewsResult(None if skipped else 0, src, q, False, today, days, [],
+                                    "ambiguous_skipped" if skipped else f.confidence)
     if result is not None:
         _cache_put(key, asdict(result))
     return result
@@ -259,18 +278,21 @@ async def backfill_news_mentions(limit: int = 30) -> Dict[str, Any]:
 
     async with AsyncSessionLocal() as s:
         rows = (await s.execute(text("""
-            SELECT e.id, e.name, e.entity_type, e.category, COALESCE(e.is_international, false) AS intl, m.time
+            SELECT e.id, e.name, e.entity_type, e.category, COALESCE(e.is_international, false) AS intl, m.time,
+                   e.external_ids->>'wikipedia_title' AS wt, e.name_aliases AS al
             FROM entities e
-            JOIN LATERAL (SELECT time, news_mentions_7d FROM entity_metrics WHERE entity_id = e.id
+            JOIN LATERAL (SELECT time, news_mentions_7d, news_confidence FROM entity_metrics WHERE entity_id = e.id
                           ORDER BY time DESC LIMIT 1) m ON true
-            WHERE e.status = 'active' AND m.news_mentions_7d IS NULL
+            WHERE e.status = 'active' AND m.news_mentions_7d IS NULL AND m.news_confidence IS NULL
             ORDER BY m.time ASC LIMIT :n"""), {"n": limit})).mappings().all()
     if not rows:
         return {"rows": 0, "status": "nothing_to_do"}
 
     updates, failed, by_src, streak = [], 0, {}, 0
     for r in rows:
-        res = await fetch_news_mentions(r["name"], r["entity_type"], r["category"], r["intl"])
+        from app.services.news_filter import disambiguator_of
+        res = await fetch_news_mentions(r["name"], r["entity_type"], r["category"], r["intl"],
+                                        disambiguator=disambiguator_of(r["wt"]), aliases=r["al"] or [])
         if res is None:
             failed += 1
             streak += 1
@@ -280,13 +302,15 @@ async def backfill_news_mentions(limit: int = 30) -> Dict[str, Any]:
             continue
         streak = 0
         by_src[res.source] = by_src.get(res.source, 0) + 1
-        updates.append({"eid": r["id"], "t": r["time"], "n": res.count, "p": json.dumps({"news_mentions_7d": res.provenance()})})
+        updates.append({"eid": r["id"], "t": r["time"], "n": res.count, "c": res.confidence,
+                        "s": json.dumps(res.sample_titles), "p": json.dumps({"news_mentions_7d": res.provenance()})})
     if updates:
         async with AsyncSessionLocal() as s:
             await s.execute(text("""
-                UPDATE entity_metrics SET news_mentions_7d = :n,
+                UPDATE entity_metrics SET news_mentions_7d = :n, news_confidence = :c,
+                       news_sample_titles = CAST(:s AS jsonb),
                        signal_provenance = COALESCE(signal_provenance, '{}'::jsonb) || CAST(:p AS jsonb)
-                WHERE entity_id = :eid AND time = :t AND news_mentions_7d IS NULL"""), updates)
+                WHERE entity_id = :eid AND time = :t AND news_mentions_7d IS NULL AND news_confidence IS NULL"""), updates)
             await s.commit()
     logger.info("news backfill", selected=len(rows), written=len(updates), failed=failed, by_source=by_src)
     return {"rows": len(updates), "selected": len(rows), "failed": failed, "by_source": by_src,

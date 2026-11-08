@@ -49,7 +49,8 @@ def test_stats_dict_handles_empty_scope_without_division_by_zero():
     d = stats_dict((0, 0, None, 0, 0))
     assert d["coverage_pct"] == 0.0 and d["avg_score"] is None
     d = stats_dict((10, 5, 41.26, 6, 4))
-    assert d == {"total": 10, "scored": 5, "avg_score": 41.3, "domestic": 6, "international": 4, "coverage_pct": 50.0}
+    assert d == {"total": 10, "scored": 5, "avg_score": 41.3, "domestic": 6, "international": 4, "coverage_pct": 50.0,
+                 "unrated": 5}
 
 
 def test_market_clauses_compile_and_partition():

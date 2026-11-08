@@ -51,3 +51,35 @@ async def test_admin_routes_require_auth(client):
                          ("patch", "/admin/entities/00000000-0000-0000-0000-000000000000")):
         r = await getattr(client, method)(path)
         assert r.status_code in (401, 403), (path, r.status_code)
+
+
+# ── identity ids (youtube_channel_id / musicbrainz_id / wikidata_qid) ────────
+def test_identity_validation_accepts_and_rejects():
+    import pytest
+    from fastapi import HTTPException
+    from app.api.routes.admin_data import validate_identity
+    ok = validate_identity({"youtube_channel_id": "UCtFOW7jJXChfFNoucRFqRmw", "wikidata_qid": " Q123 ",
+                            "musicbrainz_id": "A1B2C3D4-0000-4000-8000-0123456789AB"})
+    assert ok["wikidata_qid"] == "Q123" and ok["musicbrainz_id"].islower()
+    for bad in ({"youtube_channel_id": "@arijit"}, {"youtube_channel_id": "UCshort"}, {"wikidata_qid": "123"},
+                {"wikidata_qid": "Q0"}, {"musicbrainz_id": "not-a-uuid"}, {"wikidata_qid": 5}, {"wikidata_qid": ""}):
+        with pytest.raises(HTTPException) as e:
+            validate_identity(bad)
+        assert e.value.status_code == 422
+
+
+def test_apply_identity_edit_provenance_and_idempotence():
+    from app.api.routes.admin_data import apply_identity_edit
+    ext, ch = apply_identity_edit({"imdb_id": "x"}, {"wikidata_qid": "Q5"}, "a@b.c", "2026-01-01T00:00:00Z")
+    assert ext["wikidata_qid"] == "Q5" and ext["imdb_id"] == "x" and ch["wikidata_qid"] == {"old": None, "new": "Q5"}
+    assert ext["identity_manual"]["wikidata_qid"]["source"] == "manual" and ext["identity_manual"]["wikidata_qid"]["by"] == "a@b.c"
+    ext2, ch2 = apply_identity_edit(ext, {"wikidata_qid": "Q5"}, "a@b.c")
+    assert ch2 == {} and ext2 == ext
+    ext3, ch3 = apply_identity_edit(ext, {"wikidata_qid": "Q6"}, "z@b.c")
+    assert ext3["identity_manual"]["wikidata_qid"]["previous"] == "Q5" and ch3["wikidata_qid"]["new"] == "Q6"
+
+
+def test_identity_fields_not_in_regular_whitelist_but_patch_route_exists():
+    from app.api.routes.admin_data import ENTITY_FIELDS, IDENTITY_FIELDS
+    assert not set(IDENTITY_FIELDS) & set(ENTITY_FIELDS)
+    assert set(IDENTITY_FIELDS) == {"youtube_channel_id", "musicbrainz_id", "wikidata_qid"}

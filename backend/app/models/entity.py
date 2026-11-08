@@ -97,6 +97,9 @@ class Entity(Base):
     # Per-field source/QID/retrieval-date provenance for enriched data
     data_provenance = Column(JSONB)
     last_social_listened_at = Column(TIMESTAMP(timezone=True))
+    # Exact identity (Wikidata-sourced): ISO country name from P27/P495; NULL when unresolved
+    nationality = Column(Text)
+    signal_ids_resolved_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 

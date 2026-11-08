@@ -43,7 +43,7 @@ def run_checks(c):
     cnt("duplicate entity names (normalised)", "critical",
         "select count(*) from (select lower(regexp_replace(name,'[^a-zA-Z0-9]','','g')) n, entity_type from entities where status='active' group by 1,2 having count(*)>1) t")
     cnt("duplicate wikidata_qid across entities", "critical",
-        "select count(*) from (select external_ids->>'wikidata_qid' q from entities where external_ids ? 'wikidata_qid' group by 1 having count(*)>1) t")
+        "select count(*) from (select external_ids->>'wikidata_qid' q from entities where status='active' and external_ids ? 'wikidata_qid' group by 1 having count(*)>1) t")
     cnt("duplicate city names", "critical", "select count(*) from (select lower(name) from cities group by 1 having count(*)>1) t")
     cnt("duplicate venues (same city + name)", "warn",
         "select count(*) from (select city, lower(name) from venues group by 1,2 having count(*)>1) t")
@@ -72,6 +72,19 @@ def run_checks(c):
         "6371*2*asin(sqrt(power(sin(radians(v.lat-c.lat)/2),2)+cos(radians(c.lat))*cos(radians(v.lat))*power(sin(radians(v.lng-c.lng)/2),2)))>60")
     cnt("domestic entities with is_international and primary_market India", "warn",
         "select count(*) from entities e where status='active' and is_international and primary_market='India' and external_ids ? 'wikidata_qid' and country='India'", "(Indian-citizen flagged international)")
+    # ---- identity / signal validity (Data Agent A)
+    LATEST = "(select distinct on (entity_id) * from entity_metrics order by entity_id, time desc)"
+    cnt("music-only signal (Last.fm) on non-music types not marked wrong_type", "critical",
+        f"select count(*) from entities e join {LATEST} m on m.entity_id=e.id where e.status='active' and e.entity_type in ('sports_team','comedian','movie','attraction') "
+        "and m.signal_validity is not null and coalesce(m.signal_validity->>'lastfm','') <> 'wrong_type'")
+    cnt("verified YouTube row without recorded title similarity", "critical",
+        f"select count(*) from {LATEST} m where m.signal_validity->>'youtube' like 'verified%' and (m.signal_validity->'youtube_detail'->>'similarity') is null")
+    cnt("is_international=false with a non-India nationality", "critical",
+        "select count(*) from entities where status='active' and coalesce(is_international,false)=false and nationality is not null and nationality<>'India'")
+    cnt("active entities with signal_validity missing on latest metric row", "warn",
+        f"select count(*) from entities e join {LATEST} m on m.entity_id=e.id where e.status='active' and m.signal_validity is null")
+    nat = q1(c, "select count(*) from entities where status='active' and nationality is not null")
+    add("entities with Wikidata nationality", "info", True, f"{nat}")
     # ---- provenance / enrichment coverage (info, thresholds as warn)
     pct = lambda sql: q1(c, sql) or 0
     ent_total = q1(c, "select count(*) from entities where status='active'") or 1

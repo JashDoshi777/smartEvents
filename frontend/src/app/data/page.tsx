@@ -27,7 +27,7 @@ const ENTITY_TYPES = ['artist', 'comedian', 'attraction', 'movie', 'sports_team'
 const VENUE_TYPES = ['arena', 'stadium', 'theatre', 'club', 'convention_centre', 'amphitheatre', 'sports_complex', 'outdoor_grounds', 'art_gallery', 'other'];
 const TYPES: Record<GapKind, string[]> = { entities: ENTITY_TYPES, venues: VENUE_TYPES, cities: [] };
 
-type FieldKind = { t: 'int' | 'num' | 'text' | 'long' | 'bool' | 'enum' | 'url' | 'pin'; min?: number; max?: number; options?: string[] };
+type FieldKind = { t: 'int' | 'num' | 'text' | 'long' | 'bool' | 'enum' | 'url' | 'pin' | 'ytid' | 'mbid' | 'qid'; min?: number; max?: number; options?: string[] };
 const FIELD: Record<string, FieldKind> = {
   total_capacity: { t: 'int', min: 1 }, standing_capacity: { t: 'int', min: 1 }, seated_capacity: { t: 'int', min: 1 }, vip_capacity: { t: 'int', min: 1 },
   typical_venue_capacity_min: { t: 'int', min: 1 }, typical_venue_capacity_max: { t: 'int', min: 1 },
@@ -38,10 +38,18 @@ const FIELD: Record<string, FieldKind> = {
   comedy_market_size: { t: 'num', min: 0, max: 100 }, music_market_size: { t: 'num', min: 0, max: 100 },
   lat: { t: 'num', min: 6, max: 38 }, lng: { t: 'num', min: 68, max: 98 },
   is_international: { t: 'bool' }, is_indoor: { t: 'bool' }, has_parking: { t: 'bool' }, is_alcohol_permitted: { t: 'bool' },
+  youtube_channel_id: { t: 'ytid' }, musicbrainz_id: { t: 'mbid' }, wikidata_qid: { t: 'qid' },
   venue_type: { t: 'enum', options: VENUE_TYPES }, description: { t: 'long' }, image_url: { t: 'url' }, pincode: { t: 'pin' },
 };
 const fieldKind = (f: string): FieldKind => FIELD[f] ?? { t: 'text' };
-const label = (f: string) => { const s = f.replace(/_/g, ' ').replace(/\b(pct|url)\b/g, m => m.toUpperCase()); return s.charAt(0).toUpperCase() + s.slice(1); };
+const ID_LABEL: Record<string, string> = { youtube_channel_id: 'YouTube channel ID (UC…)', musicbrainz_id: 'MusicBrainz artist ID', wikidata_qid: 'Wikidata ID (Q…)' };
+const SIGNAL_CHIPS = [
+  { value: 'youtube:unresolved', label: 'YouTube unresolved' }, { value: 'youtube:title_mismatch', label: 'YouTube mismatch' },
+  { value: 'youtube:metric_from_other_channel', label: 'YouTube wrong channel' }, { value: 'lastfm:unresolved', label: 'Last.fm unresolved' },
+  { value: 'lastfm:name_unverified', label: 'Last.fm unverified' }, { value: 'lastfm:wrong_type', label: 'Last.fm not applicable' },
+];
+const VERDICT_TEXT: Record<string, string> = { unresolved: 'unresolved', title_mismatch: 'name mismatch', metric_from_other_channel: 'wrong channel', name_unverified: 'unverified', wrong_type: 'n/a', name_match_unverified: 'name only' };
+const label = (f: string) => { if (ID_LABEL[f]) return ID_LABEL[f];  const s = f.replace(/_/g, ' ').replace(/\b(pct|url)\b/g, m => m.toUpperCase()); return s.charAt(0).toUpperCase() + s.slice(1); };
 const typeLabel = (t: string) => label(t);
 
 function validate(field: string, raw: string): { value?: string | number | boolean; error?: string } {
@@ -56,6 +64,9 @@ function validate(field: string, raw: string): { value?: string | number | boole
     return { value: n };
   }
   if (k.t === 'url' && !/^https?:\/\/\S+$/i.test(v)) return { error: 'Must start with http:// or https://.' };
+  if (k.t === 'ytid' && !/^UC[0-9A-Za-z_-]{22}$/.test(v)) return { error: 'Use the channel ID (starts with UC, 24 characters), not a @handle.' };
+  if (k.t === 'mbid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)) return { error: 'Use the MusicBrainz artist ID (a UUID).' };
+  if (k.t === 'qid' && !/^Q[1-9][0-9]{0,12}$/.test(v)) return { error: 'Use a Wikidata ID like Q12345.' };
   if (k.t === 'pin' && !/^\d{6}$/.test(v)) return { error: 'Enter a 6-digit pincode.' };
   if (k.t === 'enum' && !k.options?.includes(v)) return { error: 'Choose a type.' };
   return { value: v };
@@ -85,7 +96,13 @@ function EditSheet({ kind, item, editable, me, onClose, onSaved }: {
   const [lastId, setLastId] = useState<string | null>(null);
   if (item && item.id !== lastId) { setLastId(item.id); setVals({}); setErrs({}); setShowOther(false); setProv({}); setFormErr(''); }
 
-  const missing = useMemo(() => (item?.missing ?? []).filter(f => editable.includes(f)), [item, editable]);
+  const idPrimary = useMemo(() => {
+    const s = item?.signals; const out: string[] = [];
+    if (s && s.youtube && !s.youtube.startsWith('verified_')) out.push('youtube_channel_id');
+    if (s && s.lastfm && ['unresolved', 'name_unverified'].includes(s.lastfm)) out.push('musicbrainz_id');
+    return out.filter(f => editable.includes(f));
+  }, [item, editable]);
+  const missing = useMemo(() => [...idPrimary, ...(item?.missing ?? []).filter(f => editable.includes(f))], [item, editable, idPrimary]);
   const other = useMemo(() => editable.filter(f => !missing.includes(f)), [editable, missing]);
   const unEditable = (item?.missing ?? []).filter(f => !editable.includes(f));
 
@@ -141,7 +158,7 @@ function EditSheet({ kind, item, editable, me, onClose, onSaved }: {
       {item && (
         <form className={styles.form} onSubmit={e => { e.preventDefault(); void save(); }} noValidate>
           <p className={styles.sub}>
-            {missing.length ? `Missing: ${missing.map(label).join(', ')}.` : 'No tracked fields are missing.'}{' '}
+            {missing.length ? `${idPrimary.length ? 'Needs identity: ' : 'Missing: '}${missing.map(label).join(', ')}.` : 'No tracked fields are missing.'}{' '}
             Values you save are stored as <b>Manual · you</b> with an audit trail. Fields can be set, never cleared.
           </p>
           {unEditable.length > 0 && <p className={styles.fieldHint}>{unEditable.map(label).join(', ')} can’t be edited here.</p>}
@@ -230,17 +247,18 @@ export default function DataQualityPage() {
   const [missing, setMissing] = useState<string[]>([]);
   const [type, setType] = useState('');
   const [market, setMarket] = useState<'all' | 'india' | 'global'>('all');
+  const [signal, setSignal] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<GapItem | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  const query: GapQuery = useMemo(() => ({ kind, type: type || undefined, market, q: q.trim() || undefined, missing, page, page_size: PAGE_SIZE }), [kind, type, market, q, missing, page]);
+  const query: GapQuery = useMemo(() => ({ kind, type: type || undefined, market, q: q.trim() || undefined, missing, signal: signal || undefined, page, page_size: PAGE_SIZE }), [kind, type, market, q, missing, signal, page]);
   const key = allowed ? ['admin-gaps', JSON.stringify(query)] : null;
   const { data, error, isLoading, mutate } = useSWR<DataGapsResponse>(key, () => getDataGaps(query), { keepPreviousData: true });
 
   const reset = (fn: () => void) => { fn(); setPage(1); };
-  const switchKind = (k: GapKind) => { setKind(k); setMissing([]); setType(''); setQ(''); setPage(1); };
+  const switchKind = (k: GapKind) => { setKind(k); setMissing([]); setType(''); setQ(''); setSignal(''); setPage(1); };
   const toggle = (f: string) => reset(() => setMissing(m => m.includes(f) ? m.filter(x => x !== f) : [...m, f]));
 
   const coverage = useMemo(() => {
@@ -315,11 +333,13 @@ export default function DataQualityPage() {
         <div className={styles.filters}>
           {data && <div className={styles.chips} role="group" aria-label="Missing fields">{data.tracked_fields.map(f => (
             <button key={f} type="button" className="chip" aria-pressed={missing.includes(f)} onClick={() => toggle(f)}>{label(f)}<span style={{ opacity: .65 }}>{num(data.summary_missing_counts[f] ?? 0)}</span></button>))}</div>}
+          {kind === 'entities' && <div className={styles.chips} role="group" aria-label="Signals" data-testid="signal-chips">{SIGNAL_CHIPS.map(c => (
+            <button key={c.value} type="button" className="chip" aria-pressed={signal === c.value} onClick={() => reset(() => setSignal(s => s === c.value ? '' : c.value))}>{c.label}</button>))}</div>}
           <div className={styles.filterRow}>
             <div className={styles.search}><Search size={15} strokeWidth={1.75} /><input className="input" placeholder={`Search ${kind}`} aria-label={`Search ${kind}`} value={q} onChange={e => reset(() => setQ(e.target.value))} /></div>
             {TYPES[kind].length > 0 && <select className={`input ${styles.select}`} aria-label="Type" value={type} onChange={e => reset(() => setType(e.target.value))}><option value="">All types</option>{TYPES[kind].map(t => <option key={t} value={t}>{typeLabel(t)}</option>)}</select>}
             {kind === 'entities' && <Segmented<'all' | 'india' | 'global'> ariaLabel="Market" value={market} onChange={m => reset(() => setMarket(m))} options={[{ value: 'all', label: 'All' }, { value: 'india', label: 'India' }, { value: 'global', label: 'Global' }]} />}
-            {missing.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => reset(() => setMissing([]))}>Clear filters</button>}
+            {(missing.length > 0 || signal) && <button className="btn btn-ghost btn-sm" onClick={() => reset(() => { setMissing([]); setSignal(''); })}>Clear filters</button>}
           </div>
         </div>
 
@@ -334,6 +354,7 @@ export default function DataQualityPage() {
                   <span className={styles.rowName}>{i.name}</span>
                   <span className={styles.rowMeta}>{metaOf(i) || '—'}</span>
                   <span className={styles.rowMeta} style={{ whiteSpace: 'normal' }}>{i.missing.length ? `Missing ${i.missing.map(label).join(', ')}` : 'Complete'}</span>
+                  {i.signals && <span className={styles.rowMeta} style={{ whiteSpace: 'normal' }}>{[i.signals.youtube && !i.signals.youtube.startsWith('verified_') ? `YouTube ${VERDICT_TEXT[i.signals.youtube] ?? i.signals.youtube}` : null, i.signals.lastfm && i.signals.lastfm !== 'wrong_type' && !['verified_mbid', 'name_verified_tags'].includes(i.signals.lastfm) ? `Last.fm ${VERDICT_TEXT[i.signals.lastfm] ?? i.signals.lastfm}` : null].filter(Boolean).join(' · ') || 'Identity verified'}</span>}
                 </div>
                 <ChevronRight size={16} color="var(--text-tertiary)" />
               </button>))}</div>}

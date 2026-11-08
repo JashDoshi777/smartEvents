@@ -2,6 +2,8 @@
 
 /* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
 
+import { ConfidenceTag } from '@/components/intel/ScoreCue';
+import { verifiedNote } from '@/lib/provenance';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
@@ -110,7 +112,7 @@ function Content() {
             ) : rec.error && !rec.data ? (
               <ErrorState message={city ? 'Couldn’t rank for this city. Try another or clear the city filter.' : 'Couldn’t load recommendations.'} onRetry={() => rec.mutate()} />
             ) : items.length === 0 ? (
-              <EmptyState title="No candidates match" message={`No ${isIndia ? 'Indian' : 'global'} entities with live scores fit these filters${city ? ` for ${city}` : ''}. Try widening them.`} />
+              <EmptyState title="No candidates match" message={`No ${isIndia ? 'Indian' : 'global'} entities with a verified score fit these filters${city ? ` for ${city}` : ''}. Try widening them.`} />
             ) : (
               <div style={{ opacity: rec.isValidating ? 0.6 : 1, transition: 'opacity .2s' }}>
                 {items.map((r, i) => (
@@ -120,7 +122,7 @@ function Content() {
                     <span className={k.avatar}>{initials(r.entity_name)}</span>
                     <span className={k.main}>
                       <span className={k.name}>{r.entity_name}{r.trend_direction === 'rising' && <TrendingUp size={13} strokeWidth={1.75} color="var(--positive)" />}{r.trend_direction === 'falling' && <TrendingDown size={13} strokeWidth={1.75} color="var(--negative)" />}</span>
-                      <span className={k.sub}>{r.category ?? '—'}{r.city_demand_score != null ? ` · ${city} fit ${Math.round(r.city_demand_score)}` : ''}</span>
+                      <span className={k.sub}>{r.category ?? '—'}{r.city_demand_score != null ? ` · ${city} fit ${Math.round(r.city_demand_score)}` : ''}{verifiedNote(r.signals_used) ? ` · ${verifiedNote(r.signals_used)}` : ''}<ConfidenceTag confidence={r.score_confidence} signals={r.signals_used} /></span>
                     </span>
                     <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.0625rem' }}>{r.recommendation_score.toFixed(1)}</span>
                   </motion.button>
