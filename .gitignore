@@ -66,3 +66,8 @@ backend/.env
 backend/celerybeat-schedule*
 test-results/
 playwright-report/
+
+# runtime caches (news signal, scrapers, etc.)
+.cache/
+**/.cache/
+backend/.cache/
