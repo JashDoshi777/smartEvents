@@ -63,7 +63,7 @@ function EventRowView({ e, i }: { e: EventRow; i: number }) {
       </div>
       <div className={styles.eRight}>
         <b className="tnum">{price(e)}</b>
-        <span className={styles.tag}>{e.fill_rate != null ? `${Math.round(e.fill_rate * (e.fill_rate <= 1 ? 100 : 1))}% sold · ` : ''}{sourceLabel(e.source)} · {cap(e.category)}</span>
+        <span className={styles.tag}>{e.fill_rate != null ? `${Math.round(e.fill_rate * (e.fill_rate <= 1 ? 100 : 1))}% sold · ` : 'Fill not tracked · '}{sourceLabel(e.source)} · {cap(e.category)}</span>
       </div>
     </motion.div>
   );

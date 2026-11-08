@@ -53,7 +53,7 @@ def _sentiment_label(compound: float) -> str:
     return "neutral"
 
 
-async def _get_priority_entities() -> List[Dict[str, Any]]:
+async def _get_priority_entities(limit: int = None) -> List[Dict[str, Any]]:
     """
     Same real "never-covered-first, then on-District, then verified"
     ordering entity_metrics.py's _sync_all() uses, applied to this
@@ -73,7 +73,7 @@ async def _get_priority_entities() -> List[Dict[str, Any]]:
                 Entity.is_active_on_district.desc(),
                 Entity.is_verified.desc(),
             )
-            .limit(ENTITIES_PER_CYCLE)
+            .limit(limit or ENTITIES_PER_CYCLE)
         )
         entities = result.scalars().all()
         return [{"id": e.id, "name": e.name} for e in entities]
@@ -270,8 +270,8 @@ async def _collect_for_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def _collect_all_social() -> Dict[str, Any]:
-    entities = await _get_priority_entities()
+async def _collect_all_social(limit: int = None) -> Dict[str, Any]:
+    entities = await _get_priority_entities(limit)
     if not entities:
         logger.info("social_listening: no active entities found")
         return {"processed": 0, "status": "no_entities"}

@@ -27,6 +27,7 @@ async def health():
     # Postgres is the only hard dependency; Mongo/Redis are optional extras
     # (background workers) and must not flip the whole API to 'degraded'.
     all_healthy = db
+    jobs = await _jobs_summary() if db else {}
     result = {
         "status": "ok" if all_healthy else "degraded",
         "version": settings.APP_VERSION,
@@ -35,6 +36,7 @@ async def health():
             "mongodb": "up" if mongo else "optional-offline",
             "redis": "up" if redis else "optional-offline",
         },
+        "jobs": jobs,
         "apis_configured": {
             "spotify": settings.is_api_configured("spotify"),
             "youtube": settings.is_api_configured("youtube"),
@@ -52,6 +54,21 @@ async def health():
     return _respond(result)
 
 
+async def _jobs_summary() -> dict:
+    """Last run per scheduler job (one query). Never fails the health check."""
+    try:
+        from sqlalchemy import text
+        from app.core.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as s:
+            rows = (await s.execute(text(
+                "SELECT DISTINCT ON (job_name) job_name, status, started_at, finished_at, rows_affected "
+                "FROM job_runs ORDER BY job_name, started_at DESC"))).all()
+        return {r[0]: {"status": r[1], "started_at": r[2].isoformat() if r[2] else None,
+                       "finished_at": r[3].isoformat() if r[3] else None, "rows_affected": r[4]} for r in rows}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _live(result: dict) -> dict:
     """Cheap, always-fresh parts (no I/O): response-cache + DB pool stats."""
     pool = engine.pool
@@ -59,7 +76,8 @@ def _live(result: dict) -> dict:
         pool_info = {"size": pool.size(), "checked_out": pool.checkedout(), "overflow": pool.overflow()}
     except Exception:  # pragma: no cover - pool impl without these
         pool_info = {}
-    return {**result, "cache": cache_stats(), "db_pool": pool_info}
+    from app.services.scheduler.setup import scheduler_summary
+    return {**result, "cache": cache_stats(), "db_pool": pool_info, "scheduler": scheduler_summary()}
 
 
 def _respond(result: dict):

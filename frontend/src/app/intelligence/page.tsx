@@ -18,6 +18,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { ScoreRing } from '@/components/intel/ScoreRing';
 import { verdictFor, typeLabel, initials, useScopedPortfolio } from '@/components/intel/entity-utils';
+import { sourcesNote } from '@/lib/provenance';
 import { getWatchlist, addToWatchlist, removeFromWatchlist, getEntityScore, getEntityCities, compareEntities, PortfolioEntity } from '@/lib/api';
 import { compact, num, dateIN } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
@@ -107,6 +108,7 @@ function EntityDetail({ entity, watched, onToggleWatch, onCompare, onClose, inSh
                 ['Last.fm listeners', compact(s?.lastfm_listeners)], ['YouTube subscribers', compact(s?.youtube_subscribers)],
                 ['YouTube views (30d)', compact(s?.youtube_views_30d)], ['News mentions (7d)', s?.news_mentions_7d != null ? num(s.news_mentions_7d) : '—'],
               ].map(([lab, val]) => <div key={lab} className={k.kvRow}><span>{lab}</span><span className="num-rounded">{val}</span></div>)}
+              {sourcesNote(score.data?.data_completeness ?? s?.data_completeness) && <p className="t-caption text-tertiary" style={{ padding: '8px 16px 0' }} data-testid="sources-note">{sourcesNote(score.data?.data_completeness ?? s?.data_completeness)}. The score renormalises over the sources that answered.</p>}
             </>
           )}
         </div>

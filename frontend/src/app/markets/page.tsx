@@ -11,10 +11,30 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Segmented, ChipRow } from '@/components/ui/Controls';
 import { EmptyState, ErrorState } from '@/components/ui/States';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
-import { compact, inrCompact, inr, num } from '@/lib/format';
+import { capacityLabel, compact, inrCompact, inr, num } from '@/lib/format';
 import { Ring } from '@/components/insights/Ring';
 import { CityIntelDetail, MarketCity, getCityRestaurants, getCityVenuesStrict, getExpansionGaps, getMarketCities, getMarketCityIntel } from '@/lib/api';
+import { InfoSheet, Tag } from '@/components/ui/Provenance';
 import styles from './page.module.css';
+
+const isDerived = (c: MarketCity) => c.scores_basis === 'derived';
+function DerivedExplain() {
+  return (
+    <>
+      <p>Most cities have no hand-set market scores, so LiveIQ derives them from public counts. They are an estimate of how a city compares, not a measurement of demand.</p>
+      <ul>
+        <li><b>Nightlife, music, comedy, sports, arts.</b> Each score is the average percentile rank of the city across a few counts: bars, pubs and clubs, theatres, stadiums and venues mapped in OpenStreetMap, plus our own counts of events, venues and tracked acts based there. Zero stays zero.</li>
+        <li><b>Youth share.</b> Census 2011 urban age tables for the city’s district(s), ages 18 to 35.</li>
+        <li><b>Income.</b> The state’s per-capita GSDP divided by 12. It is a state-level proxy, not the city’s own income.</li>
+      </ul>
+      <p>The 12 original cities carry editorial scores set by hand. Derived and editorial scores are not equally precise, so compare them with care. None of this is Zomato District data.</p>
+    </>
+  );
+}
+function BasisTag({ c }: { c: MarketCity }) {
+  if (!isDerived(c)) return null;
+  return <Tag title="Derived scores" explain={<DerivedExplain />} testId="derived-tag">Derived</Tag>;
+}
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const tierName = (t: number | null | undefined) => (t ? `Tier ${t}` : 'Unclassified');
@@ -66,9 +86,9 @@ function CityRow({ c, rank, active, onSelect }: { c: MarketCity; rank: number; a
       <span className={styles.rank} aria-label={`Rank ${rank}`}>{rank}</span>
       <div className={styles.cityName}>
         <p className={styles.cityTitle}>{c.name}{!c.active_on_district && <i className={styles.dot} aria-label="Expansion target" title="Expansion target" />}</p>
-        <p className={styles.sub}>{c.state} · {tierName(c.tier)} · {c.active_on_district ? 'Live' : 'Expansion target'}</p>
+        <p className={styles.sub}>{c.state} · {tierName(c.tier)} · {c.active_on_district ? 'Live' : 'Expansion target'}{isDerived(c) && ' · Derived'}</p>
       </div>
-      <span className={`${styles.cityScore} num-rounded`}>{comp != null ? comp.toFixed(1) : '—'}</span>
+      <span className={`${styles.cityScore} num-rounded`} style={isDerived(c) ? { color: 'var(--text-secondary)', fontStyle: 'italic' } : undefined} title={isDerived(c) ? 'Derived estimate' : undefined}>{comp != null ? `${isDerived(c) ? '~' : ''}${comp.toFixed(1)}` : '—'}</span>
     </motion.button>
   );
 }
@@ -149,8 +169,8 @@ function Venues({ city }: { city: string }) {
                 <p className={styles.rowTitle}>{v.name}</p>
                 <p className={styles.sub}>{[v.type?.replace(/_/g, ' '), ...(v.categories ?? []).slice(0, 2)].filter(Boolean).join(' · ') || '—'}</p>
               </div>
-              <div className={styles.venueStat}><p className="num-rounded" style={{ fontWeight: 600 }}>{num(v.capacity)}</p><p className={styles.sub}>capacity</p></div>
-              <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="num-rounded" style={{ fontWeight: 600 }}>{v.avg_fill_rate != null ? `${Math.round(v.avg_fill_rate * 100)}%` : '—'}</p><p className={styles.sub}>avg fill</p></div>
+              <div className={styles.venueStat}><p className="num-rounded" style={{ fontWeight: 600, ...(v.capacity ? {} : { color: 'var(--text-tertiary)', fontSize: '.8125rem' }) }}>{capacityLabel(v.capacity)}</p><p className={styles.sub}>capacity</p></div>
+              <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="num-rounded" style={{ fontWeight: 600 }}>{v.avg_fill_rate != null ? `${Math.round(v.avg_fill_rate * 100)}%` : 'Not tracked'}</p><p className={styles.sub}>avg fill</p></div>
               <div className={`${styles.venueStat} ${styles.hideSm}`}><p className="num-rounded" style={{ fontWeight: 600 }}>{inr(v.avg_ticket_price)}</p><p className={styles.sub}>avg ticket</p></div>
             </motion.div>
           ))}
@@ -175,6 +195,7 @@ function CityDetail({ city, onBack }: { city: MarketCity; onBack: () => void }) 
       <div>
         <h2 className={styles.cityHead} data-testid="detail-title">{city.name}</h2>
         <p className={styles.sub}>{city.state} · {tierName(city.tier)} · {city.active_on_district ? 'District live' : 'Expansion target'}</p>
+        {isDerived(city) && <div style={{ marginTop: 6 }}><BasisTag c={city} /></div>}
       </div>
 
       <GlassCard className={styles.stats}>
@@ -184,7 +205,7 @@ function CityDetail({ city, onBack }: { city: MarketCity; onBack: () => void }) 
         </div>
         {[
           { l: 'Metro population', v: compact(city.metro_population ?? city.population) },
-          { l: 'Avg monthly income', v: inrCompact(city.avg_monthly_income) },
+          { l: city.income_basis === 'state_proxy' ? 'State income proxy / month' : 'Avg monthly income', v: inrCompact(city.avg_monthly_income) },
           { l: 'Youth share', v: city.youth_population_pct != null ? `${city.youth_population_pct}%` : '—' },
         ].map(t => (
           <div key={t.l} className={styles.stat}><span className={`${styles.statVal} num-rounded`}>{t.v}</span><span className={styles.sub}>{t.l}</span></div>
@@ -201,7 +222,7 @@ function CityDetail({ city, onBack }: { city: MarketCity; onBack: () => void }) 
         )}
 
       <GlassCard className={styles.card} delay={0.04}>
-        <h3 className={styles.title}>Demand</h3>
+        <div className={styles.cardHead}><h3 className={styles.title}>Demand</h3>{isDerived(city) ? <BasisTag c={city} /> : <span className={styles.sub}>Editorial</span>}</div>
         <div className={styles.scoreGrid}>
           {scoreRows.map(([l, v], i) => (
             <div key={l} className={styles.scoreRow}>
@@ -210,6 +231,7 @@ function CityDetail({ city, onBack }: { city: MarketCity; onBack: () => void }) 
             </div>
           ))}
         </div>
+        {isDerived(city) && <p className={styles.sub} data-testid="derived-footnote">Derived from public venue counts and our own data. An estimate of relative scale, not measured demand.</p>}
         {(city.top_categories ?? []).length > 0 && <p className={styles.sub}>Top categories: {city.top_categories!.map(c => c.replace(/_/g, ' ')).join(' · ')}</p>}
       </GlassCard>
 
@@ -264,9 +286,9 @@ function CompareView({ cities, a, b, setA, setB }: { cities: MarketCity[]; a: st
         <>
           <GlassCard className={styles.card}>
             <div className={styles.cmpRow} style={{ borderBottom: 0 }}>
-              <div className={styles.cmpSide}><b className={styles.cityHead} style={{ fontSize: '1.25rem' }}>{A.name}</b><span className={styles.sub}>{tierName(A.tier)} · {A.active_on_district ? 'Live' : 'Target'}</span></div>
+              <div className={styles.cmpSide}><b className={styles.cityHead} style={{ fontSize: '1.25rem' }}>{A.name}</b><span className={styles.sub}>{tierName(A.tier)} · {A.active_on_district ? 'Live' : 'Target'}{isDerived(A) && ' · Derived'}</span></div>
               <span className={styles.cmpLabel} data-testid="cmp-wins">{wins[0]} : {wins[1]}</span>
-              <div className={`${styles.cmpSide} ${styles.right}`}><b className={styles.cityHead} style={{ fontSize: '1.25rem' }}>{B.name}</b><span className={styles.sub}>{tierName(B.tier)} · {B.active_on_district ? 'Live' : 'Target'}</span></div>
+              <div className={`${styles.cmpSide} ${styles.right}`}><b className={styles.cityHead} style={{ fontSize: '1.25rem' }}>{B.name}</b><span className={styles.sub}>{tierName(B.tier)} · {B.active_on_district ? 'Live' : 'Target'}{isDerived(B) && ' · Derived'}</span></div>
             </div>
           </GlassCard>
           <GlassCard className={styles.card}>
@@ -299,7 +321,8 @@ function ExpansionView({ cities, onOpen }: { cities: MarketCity[]; onOpen: (name
   const drivers = (c?: MarketCity) => !c ? [] : SCORE_DIMS.filter(d => d.key !== 'composite').map(d => ({ label: d.label, delta: (c.scores[d.key] ?? 0) - (avg[d.key] ?? 0) })).sort((x, y) => y.delta - x.delta).slice(0, 2).filter(d => d.delta > 0);
   return (
     <div className={styles.detail} data-testid="expansion-view">
-      <div><h2 className={styles.cityHead}>Expansion scorecard</h2><p className={styles.sub}>Cities where District is not live, ranked by opportunity.</p></div>
+      <div><h2 className={styles.cityHead}>Expansion scorecard</h2><p className={styles.sub}>Cities where District is not live, ranked by opportunity.</p>
+        <p className={styles.sub} style={{ display: 'flex', alignItems: 'center', gap: 6 }} data-testid="basis-note">Basis: mostly derived market scores and state-level income <InfoSheet title="Scorecard basis"><DerivedExplain /></InfoSheet></p></div>
       <GlassCard className={styles.card}>
         {gaps.error && !gaps.data ? <ErrorState onRetry={() => gaps.mutate()} />
           : !gaps.data ? <SkeletonRows rows={5} />
@@ -311,7 +334,7 @@ function ExpansionView({ cities, onOpen }: { cities: MarketCity[]; onOpen: (name
                 <span className={styles.rank}>{g.rank}</span>
                 <div style={{ minWidth: 0 }}>
                   <p className={styles.rowTitle} style={{ fontWeight: 600 }}>{g.city} <span className={styles.sub}>· {g.state} · {tierName(g.tier)}</span></p>
-                  <p className={styles.sub}>Market score {g.composite_market_score} · {compact(g.population)} people · {inrCompact(g.avg_monthly_income)} avg income</p>
+                  <p className={styles.sub}>{byName.get(g.city) && isDerived(byName.get(g.city)!) ? 'Derived market score ~' : 'Market score '}{g.composite_market_score} · {compact(g.population)} people · {inrCompact(g.avg_monthly_income)} avg income</p>
                   <div className={styles.chips}>{dr.length ? dr.map(d => <span key={d.label} className={styles.chipSm}>{d.label} +{d.delta.toFixed(0)} vs avg</span>) : <span className={styles.chipSm}>Close to the average</span>}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}><span className="num-rounded" style={{ fontSize: '1.375rem', fontWeight: 600 }}>{g.opportunity_score.toFixed(0)}</span><p className={styles.sub}>opportunity</p></div>
@@ -377,7 +400,7 @@ function MarketsInner() {
             {error && !data ? <ErrorState message="Couldn’t load the cities." onRetry={() => mutate()} />
               : isLoading && !data ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} height={56} radius={12} />)
               : filtered.length === 0 ? <EmptyState icon={<Building2 size={32} strokeWidth={1.5} />} title="No cities match" message="Try a different search or filter." />
-              : sections.map(sec => (
+              : <>{sections.map(sec => (
                 <div key={sec.key} data-testid={`section-${sec.key}`}>
                   {sec.title && <div className={styles.sectionHead}><span>{sec.title}</span><span>{sec.items.length}</span></div>}
                   {sec.items.map(c => (
@@ -385,6 +408,7 @@ function MarketsInner() {
                   ))}
                 </div>
               ))}
+              {cities.some(isDerived) && <p className={styles.sub} style={{ padding: '10px 14px 18px' }} data-testid="derived-legend">{group === 'rank' ? 'Ranked mixes editorial and derived (~, italic) scores, which are not equally precise. ' : '~ and Derived mark scores estimated from public counts. '}<span style={{ display: 'inline-flex', verticalAlign: 'middle' }}><InfoSheet title="Derived scores" label="About derived scores"><DerivedExplain /></InfoSheet></span></p>}</>}
           </div>
         </aside>
         <section className={styles.detailPane} aria-live="polite">

@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Brain, TrendingUp, MapPin, BarChart3, Users, IndianRupee,
   MessageSquare, Settings, Activity, Calculator, Users2, LineChart,
-  Star, CalendarDays, Radio, Sparkles, Lightbulb,
+  Star, CalendarDays, Radio, Sparkles, Lightbulb, DatabaseZap,
 } from 'lucide-react';
 
 export const NAV_GROUPS = [
@@ -31,6 +31,7 @@ export const NAV_GROUPS = [
   ]},
   { title: 'Workspace', items: [
     { href: '/watchlist', icon: Star,     label: 'Watchlist' },
+    { href: '/data',      icon: DatabaseZap, label: 'Data quality' },
     { href: '/settings',  icon: Settings, label: 'Settings' },
   ]},
 ];

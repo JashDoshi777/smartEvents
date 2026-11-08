@@ -71,3 +71,8 @@ export function greeting(now = new Date()): string {
 function trim(v: number): string {
   return v >= 100 ? v.toFixed(0) : v.toFixed(1).replace(/\.0$/, '');
 }
+
+/** Venue capacity: unknown / zero is "Not published", never a blank or a fake 0. */
+export function capacityLabel(n: number | null | undefined): string {
+  return n == null || Number.isNaN(n) || n <= 0 ? 'Not published' : NUM.format(n);
+}

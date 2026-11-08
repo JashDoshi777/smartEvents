@@ -31,6 +31,21 @@ logger = structlog.get_logger()
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+def scores_basis(c: City) -> Optional[str]:
+    """'editorial' (hand-set), 'derived' (computed from OSM/DB counts, see scripts/derive_city_scores.py) or None."""
+    prov = c.data_provenance if isinstance(c.data_provenance, dict) else {}
+    if prov.get("scores_basis") in ("editorial", "derived"):
+        return prov["scores_basis"]
+    return "editorial" if _composite(c) is not None else None
+
+
+def _basis_of(c: City, key: str, column_value, editorial: str = "editorial") -> Optional[str]:
+    prov = c.data_provenance if isinstance(c.data_provenance, dict) else {}
+    if column_value is None:
+        return None
+    return (prov.get(key) or {}).get("source", editorial) if isinstance(prov.get(key), dict) else editorial
+
+
 def _city_to_dict(c: City) -> dict:
     return {
         "id": str(c.id),
@@ -49,6 +64,10 @@ def _city_to_dict(c: City) -> dict:
         "district_events_count": c.district_events_count or 0,
         "festival_months": c.festival_months or {},
         "monsoon_months": c.monsoon_months or [],
+        "scores_basis": scores_basis(c),
+        # provenance of the demographic columns: 'editorial' | 'census2011_c13_district_urban' | 'state_proxy'
+        "youth_basis": _basis_of(c, "youth", c.youth_population_pct),
+        "income_basis": _basis_of(c, "income", c.avg_monthly_income),
         "scores": {
             "nightlife": c.nightlife_score,
             "sports_affinity": c.sports_affinity_score,
@@ -79,7 +98,8 @@ def _composite(c: City) -> Optional[float]:
 _LIST_COLS = (City.id, City.name, City.state, City.country, City.tier, City.population, City.metro_population,
               City.avg_monthly_income, City.youth_population_pct, City.lat, City.lng, City.top_categories,
               City.active_on_district, City.district_events_count, City.festival_months, City.monsoon_months,
-              City.nightlife_score, City.sports_affinity_score, City.arts_culture_score, City.comedy_market_size, City.music_market_size)
+              City.nightlife_score, City.sports_affinity_score, City.arts_culture_score, City.comedy_market_size, City.music_market_size,
+              City.data_provenance)
 
 _TIER_NAMES = {1: "Metro", 2: "Major", 3: "Emerging", 4: "Small"}
 

@@ -3,7 +3,7 @@
 /* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 import { CheckCircle2, XCircle, Moon, Sun, Server, Database, HardDrive, Star, FileDown, ChevronRight, Globe2, Bell, User as UserIcon, Loader2 } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
@@ -16,7 +16,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { useMarketScope, MarketScope } from '@/components/providers/MarketScopeProvider';
 import { readWatchlistOnly, writeWatchlistOnly } from '@/components/layout/NotificationBell';
 import { getHealth, getWatchlist, downloadExecutiveReportPdf } from '@/lib/api';
-import { num } from '@/lib/format';
+import { num, timeAgo } from '@/lib/format';
 import styles from './page.module.css';
 
 const API_LABELS: Record<string, string> = {
@@ -57,6 +57,10 @@ export default function SettingsPage() {
 
   const h = health.data;
   const apiEntries = h ? Object.entries(h.apis_configured) : [];
+  const lastRun = useMemo(() => {
+    const runs = Object.entries(h?.jobs ?? {}).map(([job, r]) => ({ job, at: r.finished_at ?? r.started_at })).filter((r): r is { job: string; at: string } => !!r.at);
+    return runs.sort((a, b) => b.at.localeCompare(a.at))[0] ?? null;
+  }, [h]);
   const configured = apiEntries.filter(([, v]) => v).length;
 
   async function exportPdf() {
@@ -144,6 +148,35 @@ export default function SettingsPage() {
             </div>
           )}
         </section>
+
+        <Section title="About the data" note="LiveIQ is built for Zomato District as a pitch tool. It runs on public signals and our own derived estimates. It does not contain District sales data.">
+          <div className="list-row">
+            <div className={styles.grow}>
+              <span className="t-callout" style={{ fontWeight: 600 }}>Sources</span>
+              <span className="t-footnote text-tertiary">Last.fm, YouTube, Wikipedia and Wikidata, Google Trends, news (GDELT, Google News), OpenStreetMap, district.in listings</span>
+            </div>
+          </div>
+          <div className="list-row" data-testid="last-refreshed">
+            <div className={styles.grow}>
+              <span className="t-callout" style={{ fontWeight: 600 }}>Last refreshed</span>
+              <span className="t-footnote text-tertiary">{!h ? 'Checking…' : lastRun ? `${lastRun.job.replace(/_/g, ' ')} · ${timeAgo(lastRun.at)}` : 'No scheduled job has run yet'}</span>
+            </div>
+            {h?.scheduler && <Status ok={h.scheduler.enabled} up="Scheduler on" down="Scheduler off" />}
+          </div>
+          <div className="list-row">
+            <div className={styles.grow}>
+              <span className="t-callout" style={{ fontWeight: 600 }}>Estimates</span>
+              <span className="t-footnote text-tertiary">Fill-rate and price models are baseline estimates until trained on real sales. City scores outside the original 12 are derived from public counts.</span>
+            </div>
+          </div>
+          <Link href="/data" className="list-row">
+            <div className={styles.grow}>
+              <span className="t-callout" style={{ fontWeight: 600 }}>Data quality</span>
+              <span className="t-footnote text-tertiary">Coverage, gaps and scheduled jobs</span>
+            </div>
+            <ChevronRight size={16} color="var(--text-tertiary)" />
+          </Link>
+        </Section>
 
         {h && <>
           <Section title="Infrastructure">

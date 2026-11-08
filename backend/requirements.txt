@@ -49,6 +49,8 @@ python-dateutil==2.9.0
 pytz==2024.1
 structlog==24.1.0
 pytrends==4.9.2            # Google Trends unofficial API client
+apscheduler==3.10.4        # in-process scheduler (replaces Celery beat when Redis is offline)
+rapidfuzz>=3.6.0           # fuzzy matching for the District sales importer
 
 # ─── Testing ─────────────────────────────────────────────────────────────────
 pytest==8.2.0

@@ -298,6 +298,7 @@ async def recommend_sign(
         "proposed_price": request.proposed_price,
         "confidence": confidence,
         "model": ml_result["model"],
+        "model_provenance": ml_result.get("model_provenance", "synthetic-baseline"),
         "has_real_metrics": has_real_metrics,
         "city_tracked": city_obj is not None,
     }

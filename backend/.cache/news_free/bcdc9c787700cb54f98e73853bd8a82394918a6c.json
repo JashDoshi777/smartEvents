@@ -1,0 +1,1 @@
+{"_ts": 1794136801.5072398, "v": {"count": 1, "source": "gdelt", "query": "\"PinkPantheress\" (singer OR musician OR concert OR band OR album)", "capped": false, "retrieved": "2026-11-08", "window_days": 7, "sample_titles": ["nomi .: this wolf may cry"]}}

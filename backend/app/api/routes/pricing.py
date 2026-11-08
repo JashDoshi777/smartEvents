@@ -253,6 +253,7 @@ async def optimize_pricing(
         ml_confidence    = ml_result["confidence"]
         sensitivity_curve= ml_result.get("sensitivity_curve", [])
         model_name       = ml_result["model"]
+        model_provenance = ml_result.get("model_provenance", "synthetic-baseline")
     else:
         # Rule-based fallback
         demand_premium = 1.0 + (demand_score - 0.5) * 0.80
@@ -272,6 +273,7 @@ async def optimize_pricing(
         ml_confidence  = 50
         sensitivity_curve = []
         model_name = "rule_based"
+        model_provenance = "rule-based"
 
     # Clamp to category benchmarks
     recommended = max(benchmarks["floor"], min(recommended, benchmarks["ultra_premium"]))
@@ -344,6 +346,7 @@ async def optimize_pricing(
             **benchmarks,
         },
         "model": model_name,
+        "model_provenance": model_provenance,
     }
 
 

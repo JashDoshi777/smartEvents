@@ -133,7 +133,7 @@ function VenueCalendarInner() {
           <div className={styles.selectWrap}>
             <select id="cal-venue" className={`input ${styles.select}`} value={venueId} disabled={venues.length === 0} onChange={e => { setVenueId(e.target.value); setSelected(null); }}>
               {venues.length === 0 && <option value="">{venuesRes.isLoading ? 'Loading venues…' : 'No venues on file'}</option>}
-              {shownVenues.map(v => <option key={v.id} value={v.id}>{v.name} · {num(v.capacity)} cap</option>)}
+              {shownVenues.map(v => <option key={v.id} value={v.id}>{v.name} · {v.capacity ? `${num(v.capacity)} cap` : 'capacity not published'}</option>)}
             </select>
             <ChevronDown size={14} className={styles.selectIcon} />
           </div>
@@ -197,7 +197,7 @@ function VenueCalendarInner() {
             <GlassCard className={styles.card} delay={0.08}>
               <div>
                 <h3 className={styles.headline}>{venue?.name ?? 'Select a venue'}</h3>
-                <p className={styles.sub}>{venue ? `${venue.city} · ${num(venue.capacity)} capacity` : '—'}</p>
+                <p className={styles.sub}>{venue ? `${venue.city} · ${venue.capacity ? `${num(venue.capacity)} capacity` : 'Capacity not published'}` : '—'}</p>
               </div>
               <h4 className={styles.headline} style={{ marginTop: 4 }}>Upcoming events</h4>
               {!cal.data ? <Skeleton height={56} radius={14} /> : upcoming.length === 0 ? (
@@ -231,7 +231,7 @@ function VenueCalendarInner() {
             <button key={v.id} type="button" className={`${styles.evRow} ${styles.evBtn}`} onClick={() => { setVenueId(v.id); setSelected(null); const [y, m] = (v.open_weekends[0] ?? today).split('-').map(Number); setView({ y, m: m - 1 }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p className="t-callout" style={{ fontWeight: 600 }}>{v.name}</p>
-                <p className="t-caption text-tertiary">{num(v.capacity)} capacity · {v.open_count} of {v.total_weekends} weekends open{v.open_weekends.length ? ` · first open ${dateIN(v.open_weekends[0], { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}` : ''}</p>
+                <p className="t-caption text-tertiary">{v.capacity ? `${num(v.capacity)} capacity` : 'Capacity not published'} · {v.open_count} of {v.total_weekends} weekends open{v.open_weekends.length ? ` · first open ${dateIN(v.open_weekends[0], { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}` : ''}</p>
               </div>
               <ChevronRight size={16} color="var(--text-tertiary)" />
             </button>))}</div>}

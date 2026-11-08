@@ -459,7 +459,7 @@ export interface DealModelResponse {
   };
   venue: { id: string | null; name: string | null; city: string; capacity: number };
   inputs: { ticket_price: number; lead_days: number };
-  prediction: { predicted_fill_rate_pct: number; model: string; confidence_pct: number; model_data_source: string | null };
+  prediction: { predicted_fill_rate_pct: number; model: string; model_provenance?: string; confidence_pct: number; model_data_source: string | null };
   artist_fee: {
     amount: number; amount_fmt: string;
     range_min: number | null; range_max: number | null; source: string;
@@ -621,7 +621,7 @@ export const getDashboardSummaryScoped = (market: 'india' | 'global' | 'all' = '
 export interface BreakoutPrediction {
   entity_id: string; name: string; entity_type: string; category: string | null; country: string | null;
   composite_score: number | null; trend_direction: 'rising' | 'falling' | 'stable' | 'pending';
-  lastfm_listeners?: number | null; news_mentions_7d: number | null; google_trend_score: number | null; last_updated: string | null;
+  lastfm_listeners?: number | null; news_mentions_7d: number | null; google_trend_score: number | null; data_completeness?: number | null; last_updated: string | null;
 }
 export interface BreakoutResponse { predictions: BreakoutPrediction[]; total: number; has_live_scores: boolean; note?: string }
 export interface ViralSignal {
@@ -639,6 +639,7 @@ export interface EntityScoreResponse {
   signals: { lastfm_listeners?: number | null; youtube_subscribers?: number | null; youtube_views_30d?: number | null;
     news_mentions_7d?: number | null; google_trend_score?: number | null; google_trend_delta_7d?: number | null;
     sentiment_compound?: number | null; data_completeness?: number | null };
+  data_completeness?: number | null;
   last_updated: string | null; data_sources: string[]; message?: string;
 }
 export const getEntityScore = (entityId: string) => apiFetch<EntityScoreResponse>(`/entities/${entityId}/score`);
@@ -661,7 +662,9 @@ export const compareEntities = (ids: string[]) =>
 export class ApiError extends Error {
   status: number;
   detail: string;
-  constructor(status: number, detail: string) { super(detail); this.status = status; this.detail = detail; }
+  /** Raw `detail` from the backend (structured 422 bodies carry per-field errors). */
+  raw?: unknown;
+  constructor(status: number, detail: string, raw?: unknown) { super(detail); this.status = status; this.detail = detail; this.raw = raw; }
 }
 
 async function apiFetchStrict<T>(path: string, opts?: RequestInit, retried = false): Promise<T> {
@@ -673,12 +676,14 @@ async function apiFetchStrict<T>(path: string, opts?: RequestInit, retried = fal
   if (res.status === 401 && !retried && (await tryRefresh())) return apiFetchStrict<T>(path, opts, true);
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
+    let raw: unknown;
     try {
       const j = await res.json();
+      raw = j?.detail;
       if (typeof j?.detail === 'string') detail = j.detail;
       else if (Array.isArray(j?.detail)) detail = j.detail.map((d: { loc?: unknown[]; msg?: string }) => `${(d.loc ?? []).slice(1).join('.')}: ${d.msg}`).join('; ');
     } catch { /* non-JSON body */ }
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, raw);
   }
   return res.json() as Promise<T>;
 }
@@ -709,11 +714,13 @@ export interface CompetitorArticle { platform: string; title: string | null; sou
 export interface CompetitorFeedResponse { articles: CompetitorArticle[]; total: number; platforms_monitored: string[]; note?: string; news_available?: boolean }
 export const getCompetitorFeed = (limit = 20) => apiFetchStrict<CompetitorFeedResponse>(`/competitors/activity-feed?limit=${limit}`);
 
+export type Basis = 'editorial' | 'derived' | 'state_proxy' | null;
 export interface CityScores { nightlife: number | null; sports_affinity: number | null; arts_culture: number | null; comedy_market: number | null; music_market: number | null; composite: number | null }
 export interface MarketCity {
   id: string; name: string; state: string; tier: number | null; monsoon_months?: number[]; festival_months?: { high_demand?: number[]; low_demand?: number[] } | null; population: number | null; metro_population: number | null;
   avg_monthly_income: number | null; youth_population_pct: number | null; top_categories: string[] | null;
   active_on_district: boolean; scores: CityScores;
+  scores_basis?: Basis; youth_basis?: Basis; income_basis?: Basis;
 }
 export const getMarketCities = () => apiFetchStrict<{ cities: MarketCity[]; total: number }>('/cities/');
 
@@ -754,6 +761,7 @@ export interface PricingResult {
   signals: { composite_score: number; google_trend_score: number; demand_score: number; city_multiplier: number; capacity_factor: number; season_factor: number; international_factor: number };
   benchmarks: { category: string; floor: number; sweet_spot: number; premium: number; ultra_premium: number };
   model: string;
+  model_provenance?: string;
 }
 export const optimizePriceStrict = (body: PricingRequest) =>
   apiFetchStrict<PricingResult>('/pricing/optimize', { method: 'POST', body: JSON.stringify(body) });
@@ -784,6 +792,8 @@ export interface HealthResponse {
   version: string;
   services: { postgres: 'up' | 'down'; mongodb: 'up' | 'down'; redis: 'up' | 'down' };
   apis_configured: Record<string, boolean>;
+  jobs?: Record<string, { status: string; started_at: string | null; finished_at: string | null; rows_affected: number | null }>;
+  scheduler?: { enabled: boolean; jobs: Record<string, string> };
 }
 export interface KPIResponse {
   generated_at: string;
@@ -802,7 +812,7 @@ export interface RecommendationItem {
   composite_score: number; city_demand_score: number | null; recommendation_score: number;
   trend_direction: 'rising' | 'falling' | 'stable'; last_updated: string | null; rank: number;
 }
-export interface RecommendationsResponse { recommendations: RecommendationItem[]; total_candidates: number; methodology: string }
+export interface RecommendationsResponse { recommendations: RecommendationItem[]; total_candidates: number; methodology: string; model_provenance?: string }
 export const getRankedRecommendations = (p: { category?: string; city?: string; isInternational?: boolean; excludeWatchlisted?: boolean; limit?: number }) => {
   const q = new URLSearchParams();
   if (p.category) q.set('category', p.category);
@@ -814,7 +824,7 @@ export const getRankedRecommendations = (p: { category?: string; city?: string; 
 };
 export interface SignVerdictResponse {
   entity_id: string; entity_name: string; city: string; verdict: 'sign' | 'consider' | 'pass' | 'insufficient_data'; reasons: string[];
-  predicted_fill_rate_pct: number; recommended_price: number; proposed_price: number; confidence: number; model: string;
+  predicted_fill_rate_pct: number; recommended_price: number; proposed_price: number; confidence: number; model: string; model_provenance?: string;
   has_real_metrics: boolean; city_tracked: boolean;
 }
 export const getSignVerdict = (body: { entity_id: string; city: string; venue_capacity: number; proposed_price: number }) =>
@@ -912,3 +922,34 @@ export interface CityGap { city: string; state: string | null; tier: number; com
 export const getExpansionGaps = () => apiFetchStrict<{ gaps: CityGap[]; total: number; methodology: string }>('/cities/gaps');
 
 export interface CopilotStreamSources { sources: string[] }
+
+
+// ── Admin: data quality + scheduler ─────────────────────────────────
+export type GapKind = 'entities' | 'venues' | 'cities';
+export interface GapItem { id: string; name: string; missing: string[]; missing_count: number; entity_type?: string | null; home_city?: string | null; venue_type?: string | null; city?: string | null; state?: string | null }
+export interface DataGapsResponse {
+  kind: GapKind; tracked_fields: string[]; editable_fields: string[]; scope_total: number; summary_missing_counts: Record<string, number>;
+  total: number; page: number; page_size: number; items: GapItem[];
+}
+export interface GapQuery { kind: GapKind; type?: string; market?: 'all' | 'india' | 'global'; city?: string; missing?: string[]; q?: string; page?: number; page_size?: number }
+export const getDataGaps = (p: GapQuery) => {
+  const q = new URLSearchParams({ kind: p.kind });
+  if (p.type) q.set('type', p.type);
+  if (p.kind === 'entities' && p.market && p.market !== 'all') q.set('market', p.market);
+  if (p.city) q.set('city', p.city);
+  if (p.q) q.set('q', p.q);
+  (p.missing ?? []).forEach(m => q.append('missing', m));
+  q.set('page', String(p.page ?? 1));
+  q.set('page_size', String(p.page_size ?? 25));
+  return apiFetchStrict<DataGapsResponse>(`/admin/data-gaps?${q}`);
+};
+export interface ProvenanceEntry { source: string; by?: string; at?: string }
+export interface PatchResult { id: string; kind: GapKind; changed: Record<string, { old: unknown; new: unknown }>; unchanged: string[]; provenance: Record<string, ProvenanceEntry> }
+export const patchAdminRecord = (kind: GapKind, id: string, body: Record<string, string | number | boolean>) =>
+  apiFetchStrict<PatchResult>(`/admin/${kind}/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+
+export interface JobRun { id: string; job: string; status: 'running' | 'success' | 'partial' | 'error'; trigger: string; started_at: string; finished_at: string | null; rows_affected: number | null; error: string | null; detail?: unknown }
+export interface AdminJob { name: string; description: string; cron_ist: Record<string, number | string>; next_run: string | null; last_run: JobRun | null }
+export interface AdminJobsResponse { scheduler: { enabled_in_this_process: boolean; env_enabled: boolean }; jobs: AdminJob[]; runs: JobRun[] }
+export const getAdminJobs = (limit = 20) => apiFetchStrict<AdminJobsResponse>(`/admin/jobs?limit=${limit}`);
+export const runAdminJob = (name: string) => apiFetchStrict<unknown>(`/admin/jobs/${encodeURIComponent(name)}/run`, { method: 'POST' });

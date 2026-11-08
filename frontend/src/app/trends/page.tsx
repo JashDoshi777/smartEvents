@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Tick } from '@/components/intel/Tick';
 import { initials, typeLabel, useScopedPortfolio } from '@/components/intel/entity-utils';
+import { sourcesNote } from '@/lib/provenance';
 import { getTrendBreakouts, getTrendViral, getDashboardMovers, BreakoutPrediction } from '@/lib/api';
 import { compact, num, timeAgo } from '@/lib/format';
 import k from '@/components/intel/Kit.module.css';
@@ -112,7 +113,7 @@ export default function TrendsPage() {
                             <span className={k.avatar}>{initials(p.name)}</span>
                             <span className={k.main}>
                               <span className={k.name}>{p.name}{p.trend_direction === 'rising' && <TrendingUp size={13} strokeWidth={1.75} color="var(--positive)" />}{p.trend_direction === 'falling' && <TrendingDown size={13} strokeWidth={1.75} color="var(--negative)" />}</span>
-                              <span className={k.sub}>{p.category ?? typeLabel(p.entity_type)}</span>
+                              <span className={k.sub}>{p.category ?? typeLabel(p.entity_type)}{sourcesNote(p.data_completeness) && ` · ${sourcesNote(p.data_completeness)}`}</span>
                             </span>
                             <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.0625rem' }}>{fmtMetric(metricOf(p, sort), sort)}</span>
                             <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />

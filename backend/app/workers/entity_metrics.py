@@ -27,6 +27,21 @@ from app.models.metrics import EntityMetric
 logger = structlog.get_logger()
 
 
+# Count of rate-limit (429 / "too many requests") failures seen by the metric fetchers; the scheduler batch reads it
+# between chunks to back off instead of hammering a throttled API.
+_RATE_LIMIT_HITS = 0
+
+
+def _note_rate_limit(exc: BaseException) -> bool:
+    """True (and counted) when an exception looks like an HTTP 429 / Google Trends throttle."""
+    global _RATE_LIMIT_HITS
+    msg = str(exc).lower()
+    if "429" in msg or "too many requests" in msg or "rate limit" in msg:
+        _RATE_LIMIT_HITS += 1
+        return True
+    return False
+
+
 async def _fetch_lastfm_metrics(entity: Dict[str, Any]) -> Dict[str, Any]:
     """Fetch Last.fm metrics for one entity."""
     entity_name = entity["name"]
@@ -102,16 +117,45 @@ async def _fetch_google_trends(entity_name: str) -> Dict[str, Any]:
     }
 
 
-async def _fetch_news_metrics(entity_name: str) -> Dict[str, Any]:
-    """Fetch news mention count and controversy risk."""
-    async with NewsAPIClient() as client:
-        news = await client.search_entity_news(entity_name, days_back=7, page_size=10)
-        controversy = await client.search_controversy(entity_name, days_back=30)
+_NEWSAPI_COOLDOWN_UNTIL = 0.0
 
-    return {
-        "news_mentions_7d": news.get("total_results", 0),
-        "controversy_risk": controversy.get("risk_level", "low"),
-    }
+
+async def _fetch_news_free(entity: Optional[Dict[str, Any]], entity_name: str) -> Optional[Dict[str, Any]]:
+    """Keyless fallback (GDELT / Google News RSS). None when no source answered."""
+    from app.services.ingestion.news_free_client import fetch_news_mentions
+    e = entity or {}
+    res = await fetch_news_mentions(entity_name, e.get("entity_type"), e.get("category"), bool(e.get("is_international")))
+    if res is None:
+        return None
+    return {"news_mentions_7d": res.count, "news_source": res.provenance()}
+
+
+async def _fetch_news_metrics(entity_name: str, entity: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """News mention count (+ controversy risk when NewsAPI answers). Falls back automatically to the keyless
+    GDELT / Google News source when NewsAPI is unconfigured, rate-limited (429) or returns no results."""
+    import time as _time
+    global _NEWSAPI_COOLDOWN_UNTIL
+    newsapi: Optional[Dict[str, Any]] = None
+    if _time.monotonic() >= _NEWSAPI_COOLDOWN_UNTIL:
+        try:
+            async with NewsAPIClient() as client:
+                news = await client.search_entity_news(entity_name, days_back=7, page_size=10)
+                controversy = await client.search_controversy(entity_name, days_back=30)
+            newsapi = {
+                "news_mentions_7d": news.get("total_results", 0),
+                "controversy_risk": controversy.get("risk_level", "low"),
+                "news_source": {"source": "newsapi", "retrieved": datetime.utcnow().date().isoformat(), "window_days": 7},
+            }
+        except Exception as exc:  # noqa: BLE001
+            if _note_rate_limit(exc):
+                _NEWSAPI_COOLDOWN_UNTIL = _time.monotonic() + 3600  # do not sleep through Retry-After for every entity
+            logger.info("NewsAPI unavailable, using keyless news source", error=str(exc)[:120])
+    if newsapi and newsapi["news_mentions_7d"]:
+        return newsapi
+    free = await _fetch_news_free(entity, entity_name)
+    if free is not None and (free["news_mentions_7d"] or not newsapi):
+        return {**(newsapi or {}), **free} if newsapi else free
+    return newsapi or {}
 
 
 async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
@@ -134,7 +178,7 @@ async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
     # Run second batch concurrently
     trends_result, news_result = await asyncio.gather(
         _fetch_google_trends(entity_name),
-        _fetch_news_metrics(entity_name),
+        _fetch_news_metrics(entity_name, entity),
         return_exceptions=True,
     )
 
@@ -146,18 +190,21 @@ async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
         metrics.update(lastfm_result)
         data_sources.append("lastfm")
     elif isinstance(lastfm_result, Exception):
+        _note_rate_limit(lastfm_result)
         log.warning("Last.fm fetch failed", error=str(lastfm_result))
 
     if isinstance(youtube_result, dict) and youtube_result:
         metrics.update(youtube_result)
         data_sources.append("youtube")
     elif isinstance(youtube_result, Exception):
+        _note_rate_limit(youtube_result)
         log.warning("YouTube fetch failed", error=str(youtube_result))
 
     if isinstance(trends_result, dict) and trends_result:
         metrics.update(trends_result)
         data_sources.append("google_trends")
     elif isinstance(trends_result, Exception):
+        _note_rate_limit(trends_result)
         log.warning("Google Trends fetch failed", error=str(trends_result))
 
     if isinstance(news_result, dict) and news_result:
@@ -229,6 +276,7 @@ async def _write_metric_to_db(entity_id: Any, metrics: Dict[str, Any]) -> None:
             composite_score=metrics.get("composite_score"),
             data_completeness=metrics.get("data_completeness"),
             collection_source="entity_metrics_worker",
+            signal_provenance=({"news_mentions_7d": metrics["news_source"]} if metrics.get("news_source") else None),
         )
         session.add(metric)
         try:
@@ -267,6 +315,59 @@ def sync_all_active_entities(self: Task):
         raise self.retry(exc=exc)
 
 
+async def collect_entity_metrics_batch(limit: int = 60, chunk: int = 6, chunk_pause: float = 4.0,
+                                       max_backoffs: int = 3) -> Dict[str, Any]:
+    """Scheduler entry point (plain async, no Celery). Collects metrics for the `limit` entities whose newest
+    collection is OLDEST (never-collected first), so every entity accumulates history over successive days.
+    Concurrency 3 (semaphore); processed in small chunks with a pause, and when a chunk hit a 429/throttle the
+    batch backs off exponentially (30s, 60s, 120s) and stops early after `max_backoffs` consecutive throttled chunks.
+    """
+    global _RATE_LIMIT_HITS
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(Entity)
+            .where(Entity.status == "active")
+            .order_by(Entity.last_enriched_at.asc().nullsfirst(), Entity.name.asc())
+            .limit(limit)
+        )
+        entities = [
+            {"id": e.id, "name": e.name, "external_ids": e.external_ids or {},
+             "entity_type": e.entity_type, "category": e.category,
+             "is_international": e.is_international}
+            for e in res.scalars().all()
+        ]
+    if not entities:
+        return {"rows": 0, "status": "no_entities"}
+
+    sem = asyncio.Semaphore(3)
+
+    async def _one(e):
+        async with sem:
+            return await _process_single_entity(e)
+
+    ok = failed = backoffs = 0
+    stopped_early = False
+    for i in range(0, len(entities), chunk):
+        before = _RATE_LIMIT_HITS
+        results = await asyncio.gather(*[_one(e) for e in entities[i:i + chunk]], return_exceptions=True)
+        ok += sum(1 for r in results if not isinstance(r, Exception))
+        failed += sum(1 for r in results if isinstance(r, Exception))
+        if _RATE_LIMIT_HITS > before:
+            backoffs += 1
+            if backoffs >= max_backoffs:
+                stopped_early = True
+                logger.warning("entity_metrics batch: repeated rate limits, stopping early", done=ok)
+                break
+            wait = 30 * (2 ** (backoffs - 1))
+            logger.warning("entity_metrics batch: rate limited, backing off", seconds=wait)
+            await asyncio.sleep(wait)
+        else:
+            backoffs = 0
+            await asyncio.sleep(chunk_pause)
+    return {"rows": ok, "failed": failed, "selected": len(entities),
+            "status": "partial_rate_limited" if stopped_early else "complete"}
+
+
 ENTITIES_PER_CYCLE = 100  # Raised from 50 now that artist_discovery.py can add 100+ entities per run
 
 
@@ -301,6 +402,7 @@ async def _sync_all() -> Dict[str, Any]:
             "external_ids": e.external_ids or {},
             "entity_type": e.entity_type,
             "category": e.category,
+            "is_international": e.is_international,
         }
         for e in db_entities
     ]

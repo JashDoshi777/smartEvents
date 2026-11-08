@@ -84,6 +84,22 @@ PRICE_MODEL_PATH   = ML_DIR / "pricing_gbr.joblib"
 FILLRATE_MODEL_PATH = ML_DIR / "fillrate_gbr.joblib"
 ENCODER_PATH       = ML_DIR / "pricing_encoders.joblib"
 MODEL_META_PATH    = ML_DIR / "pricing_meta.json"
+# A model trained on REAL District sales (scripts/retrain_fill_model.py --promote) is selected by this pointer file:
+#   {"version": "v3", "path": "district/v3"}  (directory relative to ml_models/ holding the three joblib files + metadata.json)
+PROMOTED_PATH      = ML_DIR / "promoted.json"
+SYNTHETIC_PROVENANCE = "synthetic-baseline"
+
+
+def _promoted_dir() -> Optional[Path]:
+    """Directory of the promoted district-trained model, or None (-> synthetic baseline)."""
+    try:
+        ptr = json.loads(PROMOTED_PATH.read_text())
+        d = ML_DIR / ptr["path"]
+        if all((d / f).exists() for f in ("pricing_gbr.joblib", "fillrate_gbr.joblib", "pricing_encoders.joblib")):
+            return d
+    except Exception:  # noqa: BLE001 - missing/corrupt pointer => baseline
+        pass
+    return None
 
 
 # ── Synthetic training data ───────────────────────────────────────────────────
@@ -229,6 +245,7 @@ class _PricingMLEngine:
         self._le           = None
         self._ready        = False
         self._meta: Dict   = {}
+        self.model_provenance = SYNTHETIC_PROVENANCE
 
     def _load_or_train(self):
         if self._ready:
@@ -238,6 +255,22 @@ class _PricingMLEngine:
             logger.warning("pricing_ml: scikit-learn not installed — ML pricing disabled, using rule-based fallback")
             self._ready = True
             return
+
+        # A promoted district-trained model wins over the synthetic baseline
+        pd_ = _promoted_dir()
+        if pd_ is not None:
+            try:
+                self._price_model = joblib.load(pd_ / "pricing_gbr.joblib")
+                self._fill_model  = joblib.load(pd_ / "fillrate_gbr.joblib")
+                self._le          = joblib.load(pd_ / "pricing_encoders.joblib")
+                self._meta = json.loads((pd_ / "metadata.json").read_text()) if (pd_ / "metadata.json").exists() else {}
+                self.model_provenance = f"district-trained {self._meta.get('version') or json.loads(PROMOTED_PATH.read_text()).get('version')}"
+                logger.info("pricing_ml: promoted district model loaded", provenance=self.model_provenance)
+                self._ready = True
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pricing_ml: promoted model load failed, falling back to baseline", error=str(exc))
+                self.model_provenance = SYNTHETIC_PROVENANCE
 
         # Try loading existing models from disk
         if PRICE_MODEL_PATH.exists() and FILLRATE_MODEL_PATH.exists() and ENCODER_PATH.exists():
@@ -375,6 +408,7 @@ class _PricingMLEngine:
                     "price_delta":         round(recommended - proposed_price),
                     "sensitivity_curve":   sensitivity,
                     "model":               "ml_gbr",
+                    "model_provenance":    self.model_provenance,
                     "meta":                self._meta,
                 }
             except Exception as exc:
@@ -391,6 +425,7 @@ class _PricingMLEngine:
             "price_delta":         round(rule_price - proposed_price),
             "sensitivity_curve":   [],
             "model":               "rule_based",
+            "model_provenance":    "rule-based",
             "meta":                {},
         }
 

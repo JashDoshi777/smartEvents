@@ -1,0 +1,3 @@
+event_title,event_date,city,venue_name,artist_name,category,capacity,tickets_sold,gross_revenue_inr,ticket_price_min,ticket_price_max,source_event_id
+EXAMPLE—Delete this row: Sample Artist Live,2025-03-15,Mumbai,Example Arena,Sample Artist,music,5000,4100,8200000,1000,3500,EXAMPLE-0001
+EXAMPLE—Delete this row: Sample Comedian Tour,2025-04-02,Pune,Example Auditorium,Sample Comedian,comedy,800,640,640000,500,1500,EXAMPLE-0002

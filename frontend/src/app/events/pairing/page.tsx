@@ -14,6 +14,7 @@ import { CountUp } from '@/components/intel/CountUp';
 import { Ring } from '@/components/intel/Ring';
 import { recommendPairs, type PairRecommendRequest } from '@/lib/api';
 import { inrCompact, num } from '@/lib/format';
+import { InfoSheet } from '@/components/ui/Provenance';
 import styles from './page.module.css';
 
 type Market = 'india' | 'all';
@@ -96,6 +97,8 @@ export default function PairingPage() {
                   ))}
                 </GlassCard>
               )}
+              <p className={styles.note} style={{ display: 'flex', alignItems: 'center', gap: 6 }} data-testid="model-note">Rule-based match from public signals, not trained on sales
+                <InfoSheet title="How pairings are scored"><p>Pairs are ranked by how similar two acts look on public signals (genre tags, composite score, search interest, news) and how close they are in popularity. No ticket-sales data is used.</p><p>Combined fees come from booking price ranges on file, which are rough estimates where present. A missing fee is shown as missing, never guessed.</p></InfoSheet></p>
               <p className={styles.note}>{num(res.pairs_matching_genre)} genre matches from {num(res.candidates_considered)} artists{res.anchor_entity ? `, anchored on ${res.anchor_entity.name}` : ''}. {res.methodology}</p>
             </motion.div>
           )}

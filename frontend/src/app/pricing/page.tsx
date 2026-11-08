@@ -19,6 +19,8 @@ import { CountUp } from '@/components/insights/CountUp';
 import { inr, inrCompact, num } from '@/lib/format';
 import { Segmented } from '@/components/ui/Controls';
 import { useLocalList } from '@/lib/useLocalList';
+import { ModelNote, DemandSignal } from '@/components/ui/Provenance';
+import { isBaseline, softFill } from '@/lib/provenance';
 import {
   ApiError, EntitySearchResult, PricingResult, getElasticityCurve, getMarketCities, getPortfolio,
   getPriceBenchmarkTable, optimizePriceStrict, searchEntities,
@@ -172,7 +174,9 @@ function PricingInner() {
     ['Season factor', `${result.signals.season_factor}×`],
     ['International premium', `${result.signals.international_factor}×`],
   ] : [];
+  const baseline = isBaseline(result?.model_provenance);
   const fillAtRec = rec?.predicted_fill_rate_at_recommended ?? null;
+  const tilde = baseline ? '~' : '';
   const revYours = rec && rec.predicted_fill_rate != null ? Math.round(rec.proposed_price * capN * rec.predicted_fill_rate / 100) : null;
   const revRec = rec && fillAtRec != null ? Math.round(rec.recommended_price * capN * fillAtRec / 100) : null;
   const sensData = useMemo(() => (rec?.sensitivity_curve ?? []).map(p => ({ ...p, revenue: Math.round(p.price * capN * p.attendance_pct / 100) })), [rec, capN]);
@@ -269,6 +273,7 @@ function PricingInner() {
                 <div>
                   <h3 className={styles.title}>Recommended price</h3>
                   <p className={styles.sub}>{result.entity.name} · {city} · {rec.price_tier}</p>
+                  <div style={{ marginTop: 6 }}><ModelNote provenance={result.model_provenance} /></div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
                   <CountUp className={styles.price} data-testid="rec-price" value={rec.recommended_price} format={inr} />
@@ -278,15 +283,17 @@ function PricingInner() {
                 <PriceLadder bench={result.benchmarks} proposed={rec.proposed_price} recommended={rec.recommended_price} />
               </GlassCard>
               <GlassCard className={styles.fill}>
-                <h3 className={styles.title}>Predicted fill at {inrCompact(rec.proposed_price)}</h3>
-                <Ring value={rec.predicted_fill_rate} size={116} stroke={13} color="var(--text-primary)"><span style={{ fontFamily: ROUNDED, fontSize: '1.75rem', fontWeight: 700 }}>{rec.predicted_fill_rate != null ? `${Math.round(rec.predicted_fill_rate)}%` : '—'}</span></Ring>
-                <p className={styles.sub}>{rec.predicted_fill_rate != null ? `≈ ${num(Math.round(capN * rec.predicted_fill_rate / 100))} of ${num(capN)} seats` : 'No fill estimate'}</p>
-                {fillAtRec != null && <p className={styles.sub} data-testid="fill-at-rec">At the optimal {inrCompact(rec.recommended_price)}: {Math.round(fillAtRec)}% fill</p>}
+                <h3 className={styles.title}>{baseline ? 'Baseline fill estimate' : 'Predicted fill'} at {inrCompact(rec.proposed_price)}</h3>
+                <div style={baseline ? { opacity: .6 } : undefined}>
+                  <Ring value={rec.predicted_fill_rate} size={baseline ? 96 : 116} stroke={baseline ? 9 : 13} color={baseline ? 'var(--text-tertiary)' : 'var(--text-primary)'}><span style={{ fontFamily: ROUNDED, fontSize: baseline ? '1.375rem' : '1.75rem', fontWeight: 700 }}>{rec.predicted_fill_rate != null ? `${tilde}${softFill(rec.predicted_fill_rate, baseline)}%` : '—'}</span></Ring>
+                </div>
+                <p className={styles.sub}>{rec.predicted_fill_rate != null ? (baseline ? 'Rough direction, not a sales forecast' : `≈ ${num(Math.round(capN * rec.predicted_fill_rate / 100))} of ${num(capN)} seats`) : 'No fill estimate'}</p>
+                {fillAtRec != null && <p className={styles.sub} data-testid="fill-at-rec">At the optimal {inrCompact(rec.recommended_price)}: {tilde}{softFill(fillAtRec, baseline)}% fill</p>}
               </GlassCard>
               {revYours != null && (
                 <GlassCard className={styles.wide}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <div><h3 className={styles.title}>Expected gross revenue</h3><p className={styles.sub}>Price x seats x predicted fill, before costs</p></div>
+                    <div><h3 className={styles.title}>{baseline ? 'Illustrative gross revenue' : 'Expected gross revenue'}</h3><p className={styles.sub}>{baseline ? 'Price x seats x baseline fill estimate, before costs. Not a forecast.' : 'Price x seats x predicted fill, before costs'}</p></div>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <button type="button" className="btn btn-tinted btn-sm" onClick={saveScenario} data-testid="save-scenario"><Bookmark size={14} strokeWidth={1.75} /> Save scenario</button>
                       <button type="button" className="btn btn-tinted btn-sm" onClick={copyLink} data-testid="copy-link"><Link2 size={14} strokeWidth={1.75} /> Copy link</button>
@@ -301,8 +308,12 @@ function PricingInner() {
               <GlassCard className={styles.half}>
                 <h3 className={styles.title}>Why this price</h3>
                 <p className={styles.reason}>{rec.reasoning}</p>
-                <p className={styles.sub}>{rec.confidence} · model {result.model}</p>
+                <p className={styles.sub}>{baseline ? 'Baseline model: confidence is not meaningful without real sales' : `${rec.confidence} · model ${result.model}`}</p>
                 <p className={styles.sub}>Optimal is the model price blended 70/30 with your proposal, held inside the {result.benchmarks.category} benchmark range.</p>
+              </GlassCard>
+              <GlassCard className={styles.half}>
+                <h3 className={styles.title}>Demand signal</h3>
+                <DemandSignal entityId={result.entity.id} composite={result.signals.composite_score} trend={result.signals.google_trend_score} />
               </GlassCard>
               <GlassCard className={styles.half}>
                 <h3 className={styles.title}>Signals</h3>
@@ -339,9 +350,9 @@ function PricingInner() {
               </div>
               <div style={{ overflowX: 'auto' }} data-testid="scenarios">
                 <table className="table" style={{ minWidth: 560 }}>
-                  <thead><tr><th>Act</th><th>City</th><th>Seats</th><th>Your price</th><th>Optimal</th><th>Fill at optimal</th><th>Gross at optimal</th></tr></thead>
+                  <thead><tr><th>Act</th><th>City</th><th>Seats</th><th>Your price</th><th>Optimal</th><th>Fill estimate</th><th>Illustrative gross</th></tr></thead>
                   <tbody>{scenarios.map(sc => (
-                    <tr key={sc.id} data-testid="scenario-row"><td>{sc.act}</td><td>{sc.city}</td><td className="tnum">{num(sc.capacity)}</td><td className="tnum">{inr(sc.price)}</td><td className="tnum">{inr(sc.recommended)}</td><td className="tnum">{sc.fillAtRec != null ? `${Math.round(sc.fillAtRec)}%` : '—'}</td><td className="tnum">{sc.revenueRec != null ? inrCompact(sc.revenueRec) : '—'}</td></tr>
+                    <tr key={sc.id} data-testid="scenario-row"><td>{sc.act}</td><td>{sc.city}</td><td className="tnum">{num(sc.capacity)}</td><td className="tnum">{inr(sc.price)}</td><td className="tnum">{inr(sc.recommended)}</td><td className="tnum">{sc.fillAtRec != null ? `~${Math.round(sc.fillAtRec / 5) * 5}%` : '—'}</td><td className="tnum">{sc.revenueRec != null ? inrCompact(sc.revenueRec) : '—'}</td></tr>
                   ))}</tbody>
                 </table>
               </div>

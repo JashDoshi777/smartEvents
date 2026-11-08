@@ -20,6 +20,7 @@ from app.models.intelligence import (
 )
 from app.models.user_data import Watchlist, NotificationRead
 from app.models.restaurant import Restaurant
+from app.models.job import JobRun, JobLock
 
 __all__ = [
     "User", "UserRole",
@@ -38,4 +39,5 @@ __all__ = [
     "Watchlist",
     "NotificationRead",
     "Restaurant",
+    "JobRun", "JobLock",
 ]

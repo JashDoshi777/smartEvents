@@ -56,6 +56,7 @@ from app.api.routes import (
     psychology,
     health as health_router,
     admin,
+    admin_data,
 )
 from app.api.routes import dashboard
 from app.api.routes import events
@@ -163,8 +164,15 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_prewarm(app)),
     ]
 
+    from app.services.scheduler.setup import start_scheduler, stop_scheduler
+    try:
+        await start_scheduler()
+    except Exception as exc:  # the API must come up even if the scheduler cannot
+        logger.warning("scheduler failed to start", error=str(exc)[:200])
+
     yield  # App runs here
 
+    stop_scheduler()
     for t in bg_tasks:
         t.cancel()
 
@@ -213,6 +221,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router.router, tags=["System"])
     app.include_router(auth.router, prefix="/auth", tags=["Auth"])
     app.include_router(admin.router, prefix="/admin", tags=["Admin"])
+    app.include_router(admin_data.router, prefix="/admin", tags=["Admin"])
     app.include_router(entities.router, prefix="/entities", tags=["Entity Intelligence"])
     app.include_router(trends.router, prefix="/trends", tags=["Trend Radar"])
     app.include_router(cities.router, prefix="/cities", tags=["City Intelligence"])

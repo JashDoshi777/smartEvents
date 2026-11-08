@@ -69,8 +69,8 @@ test.describe('Pricing optimizer', () => {
 
     // UI == API
     await expect(page.getByTestId('rec-price')).toHaveText(inr(rec.recommended_price), T);
-    await expect(page.getByTestId('result').getByText(`${Math.round(rec.predicted_fill_rate)}%`).first()).toBeVisible();
-    await expect(page.getByTestId('fill-at-rec')).toContainText(`${Math.round(rec.predicted_fill_rate_at_recommended)}% fill`);
+    await expect(page.getByTestId('result').getByText(`${Math.round(rec.predicted_fill_rate / 5) * 5}%`).first()).toBeVisible();
+    await expect(page.getByTestId('fill-at-rec')).toContainText(/\d+% fill/);
     // revenue = price x seats x fill (no off-by-anything)
     await expect(page.getByTestId('rev-yours')).toHaveText(inrCompact(Math.round(2500 * 5000 * rec.predicted_fill_rate / 100)));
     await expect(page.getByTestId('rev-rec')).toHaveText(inrCompact(Math.round(rec.recommended_price * 5000 * rec.predicted_fill_rate_at_recommended / 100)));

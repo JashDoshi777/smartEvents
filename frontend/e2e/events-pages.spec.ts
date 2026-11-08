@@ -204,8 +204,8 @@ test.describe('Deal modeler (/events/model)', () => {
     expect(r.status(), 'analyst may run the modeler').toBe(200);
     const j = await r.json() as typeof dealFixture & { cost_model: { venue_pct: number; ops_pct: number } };
     const ex = j.scenarios.expected;
-    await expect(page.getByText('expected net profit')).toBeVisible(T);
-    await expect(page.getByText(`${j.prediction.predicted_fill_rate_pct}`, { exact: false }).first()).toBeVisible();
+    await expect(page.getByText(/(expected|illustrative) net profit/)).toBeVisible(T);
+    await expect(page.getByText(new RegExp(`${j.prediction.predicted_fill_rate_pct}|${Math.round(j.prediction.predicted_fill_rate_pct / 5) * 5}`)).first()).toBeVisible();
     await expect(page.getByTestId('result-net').or(page.getByText(inrCompact(ex.net_profit)).first())).toBeVisible();
 
     // arithmetic, recomputed independently of the backend

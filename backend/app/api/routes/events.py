@@ -201,6 +201,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
         )
         predicted_fill_pct = ml_result["predicted_fill_rate"]
         model_name = ml_result["model"]
+        model_provenance = ml_result.get("model_provenance", "synthetic-baseline")
         confidence = ml_result["confidence"]
         # Audit finding: every other estimated value in this response is
         # labeled (artist_fee.source, cost_model_note), but the model's
@@ -211,6 +212,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
     else:
         predicted_fill_pct = round(min(95, composite_score * 0.9), 1)
         model_name = "rule_based"
+        model_provenance = "rule-based"
         confidence = 50
         model_data_source = None
 
@@ -312,6 +314,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
         "prediction": {
             "predicted_fill_rate_pct": predicted_fill_pct,
             "model": model_name,
+            "model_provenance": model_provenance,
             "confidence_pct": confidence,
             "model_data_source": model_data_source,
         },

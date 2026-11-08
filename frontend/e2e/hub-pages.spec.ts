@@ -152,7 +152,7 @@ test('Recommendations: ranked list, city filter, sign verdict', async ({ page })
     await expect(page.getByText(/Your account is a viewer/)).toBeVisible(); // QA user is a viewer
   } else {
     await btn.click();
-    await expect(page.getByText(/predicted fill/)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/predicted fill|baseline fill estimate/i).first()).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('Model price')).toBeVisible();
   }
   expect(errors.filter(e => !benign(e))).toEqual([]);

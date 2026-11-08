@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
+    SCHEDULER_ENABLED: bool = True      # in-process APScheduler (set false for secondary workers / one-off scripts)
 
     # ─── CORS ──────────────────────────────────────────────────
     CORS_ORIGINS: str = '["http://localhost:3000"]'

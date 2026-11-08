@@ -16,6 +16,8 @@ import { getCityVenues, getMe, modelEventDeal, type DealModelResponse } from '@/
 import { useToast } from '@/components/ui/Toast';
 import { useLocalList } from '@/lib/useLocalList';
 import { inr, inrCompact, num } from '@/lib/format';
+import { ModelNote, DemandSignal } from '@/components/ui/Provenance';
+import { isBaseline, softFill } from '@/lib/provenance';
 import styles from './page.module.css';
 
 const ALLOWED = ['executive', 'analyst', 'booker'];
@@ -84,6 +86,8 @@ export default function DealModelerPage() {
   const be = res?.break_even;
   const pred = res?.prediction.predicted_fill_rate_pct ?? 0;
   const beFill = be?.fill_rate_pct ?? null;
+  const baseline = isBaseline(res?.prediction.model_provenance);
+  const tl = baseline ? '~' : '';
 
   const tone = (n: number) => (n >= 0 ? 'var(--positive)' : 'var(--negative)');
   const costParts = ex ? [['Artist', ex.artist_fee, .85], ['Venue', ex.venue_cost, .5], ['Operations', ex.ops_cost, .22]] as const : [];
@@ -188,7 +192,8 @@ export default function DealModelerPage() {
                   <span className={styles.risk} style={riskStyle()}><i className={styles.dot} style={{ background: riskDot(res.risk_level), marginRight: 6, alignSelf: 'center' }} />{res.risk_level} risk</span>
                 </div>
                 <div className={styles.big} style={{ color: tone(ex?.net_profit ?? 0) }}>{ex ? <CountUp value={ex.net_profit} format={v => inrCompact(v)} /> : '—'}</div>
-                <div className={styles.bigSub}>expected net profit · {ex?.margin_pct != null ? `${ex.margin_pct}% margin` : '—'}</div>
+                <div className={styles.bigSub}>{baseline ? 'illustrative net profit' : 'expected net profit'} · {ex?.margin_pct != null ? `${ex.margin_pct}% margin` : '—'}</div>
+                <ModelNote provenance={res.prediction.model_provenance} />
                 <div className={styles.heroStats}>
                   <div><b>{inrCompact(ex?.gross_revenue)}</b><span>revenue</span></div>
                   <div><b>{inrCompact(ex?.total_cost)}</b><span>total cost</span></div>
@@ -197,9 +202,11 @@ export default function DealModelerPage() {
               </GlassCard>
 
               <GlassCard className={`${styles.ringCard} ${styles.s4}`} delay={.05}>
-                <Ring value={pred} tick={beFill} size={148} stroke={15} >
-                  <div><div className={styles.ringNum}>{pred}<small>%</small></div><div className={styles.ringLbl}>Predicted fill</div></div>
+                <div style={baseline ? { opacity: .6 } : undefined}>
+                <Ring value={pred} tick={beFill} size={baseline ? 128 : 148} stroke={baseline ? 11 : 15} >
+                  <div><div className={styles.ringNum}>{tl}{softFill(pred, baseline)}<small>%</small></div><div className={styles.ringLbl}>{baseline ? 'Baseline fill estimate' : 'Predicted fill'}</div></div>
                 </Ring>
+                </div>
                 <p className={styles.ringNote}>{be?.achievable && be.tickets != null ? <>Break-even at <b>{beFill}%</b> · {num(be.tickets)} tickets</> : 'Break-even not reachable at this price'}</p>
               </GlassCard>
 
@@ -230,12 +237,17 @@ export default function DealModelerPage() {
                 <p className={styles.note} style={{ marginTop: 8 }}>Artist fee {res.artist_fee.amount_fmt}{res.artist_fee.range_min != null && res.artist_fee.range_max != null ? ` (range ${inrCompact(res.artist_fee.range_min)} to ${inrCompact(res.artist_fee.range_max)})` : ''}</p>
               </GlassCard>
 
+              <GlassCard className={`${styles.pad} ${styles.s12}`} delay={.13}>
+                <div className={styles.head}><h2 className={styles.title}>Demand signal</h2></div>
+                <DemandSignal entityId={res.entity.id} composite={res.entity.composite_score} />
+              </GlassCard>
+
               <GlassCard className={`${styles.listCard} ${styles.s12}`} delay={.14}>
                 {(['conservative', 'expected', 'optimistic'] as const).map(k => {
                   const s = res.scenarios[k];
                   return (
                     <div key={k} className={`${styles.srow} ${k === 'expected' ? styles.srowOn : ''}`}>
-                      <div style={{ minWidth: 0 }}><b style={{ textTransform: 'capitalize' }}>{k}</b><span className="t-caption text-tertiary"> · {s.fill_rate_pct}% fill · {num(s.attendance)} tickets</span></div>
+                      <div style={{ minWidth: 0 }}><b style={{ textTransform: 'capitalize' }}>{k}</b><span className="t-caption text-tertiary"> · {tl}{softFill(s.fill_rate_pct, baseline)}% {baseline ? 'baseline fill' : 'fill'} · {num(s.attendance)} tickets</span></div>
                       <span className="tnum text-secondary">{inrCompact(s.gross_revenue)}</span>
                       <b className="tnum" style={{ color: tone(s.net_profit), minWidth: 78, textAlign: 'right' }}>{inrCompact(s.net_profit)}</b>
                     </div>
@@ -264,7 +276,7 @@ export default function DealModelerPage() {
                 <button type="button" className="btn btn-tinted" onClick={() => window.print()}><Printer size={15} strokeWidth={1.75} /> Print or save PDF</button>
               </div>
               <p className={`${styles.note} ${styles.s12}`}>
-                Model {res.prediction.model}, confidence {res.prediction.confidence_pct}%{res.prediction.model_data_source ? `, ${res.prediction.model_data_source}` : ''}. {res.cost_model_note}
+                {baseline ? 'Fill figures come from a baseline model that is not trained on real sales, so profit scenarios are illustrative.' : `Model ${res.prediction.model}, confidence ${res.prediction.confidence_pct}%.`} {res.cost_model_note}
                 {res.market_context?.predicthq?.comparable_events_found > 0 && <> PredictHQ found {res.market_context.predicthq.comparable_events_found} comparable events nearby{res.market_context.predicthq.avg_predicted_attendance != null ? ` (avg predicted attendance ${num(Math.round(res.market_context.predicthq.avg_predicted_attendance))})` : ''}.</>}
               </p>
             </motion.div>

@@ -20,6 +20,8 @@ import { initials, useScopedPortfolio } from '@/components/intel/entity-utils';
 import { getCities, getRankedRecommendations, getSignVerdict, SignVerdictResponse } from '@/lib/api';
 import { inr, num } from '@/lib/format';
 import k from '@/components/intel/Kit.module.css';
+import { ModelNote, DemandSignal } from '@/components/ui/Provenance';
+import { isBaseline, softFill } from '@/lib/provenance';
 import styles from './page.module.css';
 
 const CATEGORIES = [
@@ -151,16 +153,18 @@ function Content() {
             {result && v && (
               <motion.div className={styles.verdict} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ type: 'spring', stiffness: 220, damping: 24 }} aria-live="polite">
                 <div className={styles.vTop}>
-                  <ScoreRing score={result.predicted_fill_rate_pct} size={84} stroke={8} />
+                  <div style={isBaseline(result.model_provenance) ? { opacity: .6 } : undefined}><ScoreRing score={softFill(result.predicted_fill_rate_pct, isBaseline(result.model_provenance)) ?? 0} size={isBaseline(result.model_provenance) ? 72 : 84} stroke={8} /></div>
                   <div>
                     <p style={{ fontSize: '1.375rem', fontWeight: 700, letterSpacing: '-0.03em', color: v.color }}>{v.label}</p>
-                    <p className="t-footnote text-secondary">{Math.round(result.predicted_fill_rate_pct)}% predicted fill · {Math.round(result.confidence)}% confidence</p>
+                    <p className="t-footnote text-secondary">{isBaseline(result.model_provenance) ? `Baseline fill estimate ~${softFill(result.predicted_fill_rate_pct, true)}%` : `${Math.round(result.predicted_fill_rate_pct)}% predicted fill · ${Math.round(result.confidence)}% confidence`}</p>
+                    <ModelNote provenance={result.model_provenance} />
                   </div>
                 </div>
                 <div className={styles.kv}>
                   <div className={k.kvRow} style={{ padding: '12px 16px' }}><span>Your price</span><span className="num-rounded">{inr(result.proposed_price)}</span></div>
                   <div className={k.kvRow} style={{ padding: '12px 16px' }}><span>Model price</span><span className="num-rounded">{inr(result.recommended_price)}</span></div>
                 </div>
+                <DemandSignal entityId={result.entity_id} />
                 <ul className={styles.reasons}>{result.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
               </motion.div>
             )}

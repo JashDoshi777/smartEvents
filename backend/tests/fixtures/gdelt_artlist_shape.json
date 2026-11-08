@@ -1,0 +1,7 @@
+{"_note": "Hand-built fixture in the documented GDELT DOC 2.0 ArtList shape (the live API was timing out/throttling when fixtures were recorded); the Google News RSS fixture next to it is a real recording.",
+ "articles": [
+  {"url": "https://example.in/a1", "title": "Jawan sequel talks: Shah Rukh Khan film box office", "seendate": "20261107T081500Z", "domain": "example.in", "language": "English", "sourcecountry": "India"},
+  {"url": "https://example.in/a2", "title": "Jawan sequel talks: Shah Rukh Khan film box office", "seendate": "20261107T091500Z", "domain": "other.in", "language": "English", "sourcecountry": "India"},
+  {"url": "https://example.in/a3", "title": "Jawan trailer breaks records", "seendate": "20261105T011500Z", "domain": "example.in", "language": "English", "sourcecountry": "India"},
+  {"url": "https://example.in/old", "title": "Old Jawan story", "seendate": "20261020T011500Z", "domain": "example.in", "language": "English", "sourcecountry": "India"}
+ ]}
