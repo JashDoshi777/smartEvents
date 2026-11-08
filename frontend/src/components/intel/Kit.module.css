@@ -5,7 +5,7 @@
 .sectionH { font-size: .8125rem; color: var(--text-secondary); padding: 0 6px 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .sectionH em { font-style: normal; color: var(--text-tertiary); }
 .cardHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 18px 20px 12px; }
-.row { display: flex; align-items: center; gap: 14px; padding: 10px 20px; min-height: 56px; position: relative; color: inherit; text-decoration: none; background: transparent; border: 0; font: inherit; text-align: left; width: 100%; cursor: default; transition: background var(--duration-fast); }
+.row { display: flex; align-items: center; gap: 14px; padding: 10px 20px; min-height: 56px; position: relative; color: inherit; text-decoration: none; background: transparent; border: 0; font: inherit; text-align: left; width: 100%; cursor: default; }
 a.row, button.row { cursor: pointer; }
 a.row:hover, button.row:hover { background: var(--fill-quaternary); }
 .row[aria-selected="true"], .row[aria-pressed="true"] { background: var(--fill-tertiary); }
@@ -26,3 +26,7 @@ a.row:hover, button.row:hover { background: var(--fill-quaternary); }
 .num { font-family: ui-rounded, 'SF Pro Rounded', var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
 .btn44 { min-height: 44px; justify-content: center; }
 .note { font-size: .8125rem; color: var(--text-secondary); line-height: 1.45; }
+
+/* Long lists: let the browser skip layout/paint for off-screen rows. */
+.row { content-visibility: auto; contain-intrinsic-size: auto 56px; }
+button.row:active { transform: scale(0.992) !important; }

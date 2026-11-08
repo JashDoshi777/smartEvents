@@ -4,8 +4,7 @@
   border-radius: 28px;
   display: flex; flex-direction: column;
   padding: 14px 10px 12px;
-  background: var(--chrome-fill);
-  backdrop-filter: var(--chrome-blur); -webkit-backdrop-filter: var(--chrome-blur);
+  background: var(--chrome-solid);   /* static backdrop -> a blur would only cost GPU time */
   border: .5px solid var(--glass-border);
   box-shadow: 0 10px 40px rgba(0,0,0,.18), var(--glass-shadow);
   transition: width var(--duration-base) var(--ease-out), transform var(--duration-base) var(--ease-out);
@@ -58,7 +57,7 @@
 @media (max-width: 900px) {
   .sidebar { width: min(300px, 84vw) !important; top: 0; left: 0; bottom: 0; border-radius: 0 28px 28px 0; transform: translateX(-102%); box-shadow: none; }
   .sidebar.mobileOpen { transform: none; box-shadow: 0 0 80px rgba(0,0,0,.45); }
-  .scrim { display: block; position: fixed; inset: 0; z-index: 99; background: rgba(0,0,0,.4); backdrop-filter: blur(4px); }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 99; background: rgba(0,0,0,.5); }
   .closeMobile { display: grid; }
   .collapseBtn { display: none; }
 }

@@ -27,8 +27,9 @@
   --glass-border:       rgba(255, 255, 255, 0.05);
   --glass-border-hover: rgba(255, 255, 255, 0.18);
   --glass-blur:         none;            /* content cards are solid — Apple only blurs chrome */
-  --chrome-blur:        blur(28px) saturate(180%);
-  --chrome-fill:        rgba(22, 22, 24, 0.72);
+  --chrome-blur:        blur(20px) saturate(160%);
+  --chrome-fill:        rgba(22, 22, 24, 0.78);
+  --chrome-solid:       rgba(20, 20, 22, 0.96);   /* for fixed chrome over a static backdrop: no blur needed */
   --glass-shadow:       0 1px 0 rgba(255,255,255,0.06) inset, 0 10px 40px rgba(0,0,0,0.45);
   --glass-shadow-hover: 0 1px 0 rgba(255,255,255,0.10) inset, 0 18px 56px rgba(0,0,0,0.55);
 
@@ -104,7 +105,8 @@
   --glass-fill-hover:   #fafafc;
   --glass-fill-strong:  rgba(255, 255, 255, 0.86);
   --chrome-fill:        rgba(249, 249, 251, 0.78);
-  --chrome-blur:        blur(28px) saturate(180%);
+  --chrome-blur:        blur(20px) saturate(160%);
+  --chrome-solid:       rgba(250, 250, 252, 0.96);
   --glass-blur:         none;
   --glass-border:       rgba(60, 60, 67, 0.10);
   --glass-border-hover: rgba(60, 60, 67, 0.20);
@@ -141,7 +143,7 @@
     color-scheme: light;
     --bg-base: #f2f2f7; --bg-elevated: #fff; --bg-overlay: #f2f2f7; --bg-subtle: #e5e5ea; --bg-grouped: #f2f2f7;
     --amb-1: rgba(10,132,255,.16); --amb-2: rgba(255,149,0,.12); --amb-3: rgba(52,199,89,.10);
-    --glass-fill: #fff; --glass-fill-hover: #fafafc; --chrome-fill: rgba(249,249,251,.78); --chrome-blur: blur(28px) saturate(180%); --glass-blur: none; --glass-fill-strong: rgba(255,255,255,.86);
+    --glass-fill: #fff; --glass-fill-hover: #fafafc; --chrome-fill: rgba(249,249,251,.78); --chrome-blur: blur(20px) saturate(160%); --chrome-solid: rgba(250,250,252,.96); --glass-blur: none; --glass-fill-strong: rgba(255,255,255,.86);
     --glass-border: rgba(60,60,67,.10); --glass-border-hover: rgba(60,60,67,.20);
     --glass-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 1px 2px rgba(0,0,0,.04), 0 8px 30px rgba(0,0,0,.06);
     --glass-shadow-hover: 0 1px 0 #fff inset, 0 2px 4px rgba(0,0,0,.05), 0 16px 44px rgba(0,0,0,.10);
@@ -690,7 +692,7 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 .table th { text-align: left; font: 600 .6875rem var(--font-sans); letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-tertiary); padding: 10px 14px; border-bottom: .5px solid var(--divider); position: sticky; top: 0; background: var(--glass-fill-strong); backdrop-filter: var(--chrome-blur); }
 .table td { padding: 12px 14px; border-bottom: .5px solid var(--divider); font-size: .875rem; }
-.table tbody tr { transition: background var(--duration-fast); }
+.table tbody tr { }
 .table tbody tr:hover { background: var(--fill-quaternary); }
 .table tbody tr:last-child td { border-bottom: 0; }
 
@@ -707,7 +709,7 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }
 
 /* Sheet / modal */
-.sheet-backdrop { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.38); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+.sheet-backdrop { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.5);
   display: flex; align-items: flex-end; justify-content: center; animation: fadeIn var(--duration-base) var(--ease-out); }
 @media (min-width: 700px) { .sheet-backdrop { align-items: center; } }
 .sheet { width: min(560px, 100%); max-height: 88vh; overflow: auto; background: var(--bg-elevated); border: 1px solid var(--glass-border);
@@ -734,7 +736,7 @@ button.list-row:active, a.list-row:active { background: var(--fill-tertiary); }
 .recharts-bar-rectangle path, .recharts-rectangle { rx: 6; }
 
 /* ── Apple craft pass ── */
-html { scroll-behavior: smooth; -webkit-tap-highlight-color: transparent; }
+html { -webkit-tap-highlight-color: transparent; }   /* smooth scrolling is handled by Lenis (SmoothScroll.tsx) */
 body { font-size: 15px; line-height: 1.4; }
 .glass-card { background: var(--glass-fill); border: 0; border-radius: 20px; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .glass-card:hover { background: var(--glass-fill); box-shadow: none; }

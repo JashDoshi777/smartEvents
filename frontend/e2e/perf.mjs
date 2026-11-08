@@ -13,7 +13,7 @@ const PAGES = ['/', '/intelligence', '/trends', '/markets', '/competitors', '/ev
 const res = await fetch(`${API}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'qa@liveiq.dev', password: 'QaTest#2026' }) });
 const { tokens } = await res.json();
 
-const browser = await chromium.launch({ args: ['--enable-gpu-rasterization', '--ignore-gpu-blocklist', '--disable-frame-rate-limit'] });
+const browser = await chromium.launch({ args: ['--enable-gpu-rasterization', '--ignore-gpu-blocklist'] });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 await ctx.addInitScript(([t]) => {
   localStorage.setItem('liveiq_access_token', t.access_token);

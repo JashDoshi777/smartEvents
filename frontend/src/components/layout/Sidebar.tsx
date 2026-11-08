@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, X } from 'lucide-react';
 import { NAV_GROUPS, bestMatch } from './nav';
@@ -18,6 +18,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClose }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const best = bestMatch(pathname);
 
   return (
@@ -54,6 +55,9 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClos
                   <Link
                     key={href}
                     href={href}
+                    prefetch={false}
+                    onMouseEnter={() => router.prefetch(href)}
+                    onFocus={() => router.prefetch(href)}
                     onClick={onMobileClose}
                     className={`${styles.navItem} ${active ? styles.active : ''}`}
                     aria-current={active ? 'page' : undefined}

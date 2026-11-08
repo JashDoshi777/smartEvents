@@ -21,7 +21,7 @@ export function TabBar({ onMore }: { onMore: () => void }) {
       {TABS.map(({ href, icon: Icon, label }) => {
         const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
         return (
-          <Link key={href} href={href} className={`${styles.tab} ${active ? styles.active : ''}`} aria-current={active ? 'page' : undefined}>
+          <Link key={href} href={href} prefetch={false} className={`${styles.tab} ${active ? styles.active : ''}`} aria-current={active ? 'page' : undefined}>
             {active && <motion.span layoutId="tab-pill" className={styles.pill} transition={{ type: 'spring', stiffness: 420, damping: 34 }} />}
             <Icon size={22} strokeWidth={active ? 2.3 : 1.7} />
             <span>{label}</span>

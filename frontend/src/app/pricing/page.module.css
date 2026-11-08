@@ -4,7 +4,7 @@
 .group { background: var(--glass-fill); border-radius: 20px; overflow: hidden; }
 .row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; min-height: 52px; position: relative; width: 100%; background: none; border: 0; color: inherit; font: inherit; text-align: left; }
 .row + .row::before, .block + .block::before, .row + .block::before, .block + .row::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: .5px; background: var(--divider); }
-button.row { cursor: pointer; transition: background .15s; }
+button.row { cursor: pointer; }
 button.row:hover { background: var(--fill-quaternary); }
 .rowLabel { flex: 1; font-size: .9375rem; }
 .rowVal { color: var(--text-secondary); font-size: .9375rem; display: flex; align-items: center; gap: 6px; min-width: 0; }

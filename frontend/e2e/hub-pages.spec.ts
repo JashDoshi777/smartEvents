@@ -69,7 +69,8 @@ test.describe('Intelligence Hub: accuracy, URL state, export, keyboard', () => {
     await page.reload();
     await expect(page.getByLabel('Search entities', { exact: true }).first()).toHaveValue('a', { timeout: 30_000 });
     await expect(page.getByRole('group', { name: 'Sort' }).getByRole('button', { name: 'A–Z' })).toHaveAttribute('aria-pressed', 'true');
-    const shown = await page.getByRole('option').count();
+    // The list renders in pages of 60, so compare the CSV to the "N results" total, not the rendered DOM rows.
+    const shown = Number((await page.getByText(/^\d+ results?$/).first().innerText()).split(' ')[0]);
     const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export list as CSV' }).click()]);
     const lines = readFileSync((await dl.path())!, 'utf8').replace(/^﻿/, '').trim().split(/\r?\n/);
     expect(lines.length - 1).toBe(shown);

@@ -31,6 +31,20 @@ const TYPE_OPTIONS = [
   { value: 'sports_team', label: 'Sports' }, { value: 'movie', label: 'Film' }, { value: 'theatre_group', label: 'Theatre' },
 ];
 
+
+/** Invisible sentinel at the end of a windowed list: calls onVisible when scrolled near. */
+function LoadMore({ onVisible }: { onVisible: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([en]) => { if (en.isIntersecting) onVisible(); }, { root: el.parentElement, rootMargin: '400px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [onVisible]);
+  return <div ref={ref} style={{ height: 1 }} aria-hidden />;
+}
+
 function useIsMobile() {
   const [m, setM] = useState(false);
   useEffect(() => {
@@ -205,15 +219,6 @@ function Hub() {
     if (next !== window.location.pathname + window.location.search) window.history.replaceState(window.history.state, '', next);
   }, [query, type, sort, selectedId]);
 
-  function onListKey(ev: React.KeyboardEvent<HTMLDivElement>) {
-    if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
-    const rows = Array.from(ev.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="option"]'));
-    const i = rows.indexOf(document.activeElement as HTMLButtonElement);
-    if (i === -1 && ev.key === 'ArrowUp') return;
-    ev.preventDefault();
-    rows[Math.max(0, Math.min(rows.length - 1, i + (ev.key === 'ArrowDown' ? 1 : -1)))]?.focus();
-  }
-
   async function toggleWatch(e: PortfolioEntity) {
     if (pending.current) return;
     pending.current = true;
@@ -224,6 +229,10 @@ function Hub() {
       toast(on ? `Removed ${e.name} from watchlist` : `Added ${e.name} to watchlist`, 'success');
     } catch { toast('Couldn’t update watchlist', 'error'); } finally { pending.current = false; }
   }
+
+  const PAGE = 60;
+  const filterKey = `${scope}|${type}|${sort}|${query}`;
+  const [win, setWin] = useState({ key: filterKey, n: PAGE });
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: scoped.length };
@@ -236,6 +245,21 @@ function Hub() {
     const list = scoped.filter(e => (type === 'all' || e.type === type) && (!q || e.name.toLowerCase().includes(q) || (e.category ?? '').toLowerCase().includes(q)));
     return sort === 'name' ? [...list].sort((a, b) => a.name.localeCompare(b.name)) : [...list].sort((a, b) => (b.composite_score ?? -1) - (a.composite_score ?? -1));
   }, [scoped, query, type, sort]);
+
+  // Render the (up to ~500-row) list in pages of 60 that grow as the user scrolls: ~5k DOM nodes -> ~800.
+  const shown = win.key === filterKey ? win.n : PAGE;
+  const grow = () => setWin(w => ({ key: filterKey, n: (w.key === filterKey ? w.n : PAGE) + PAGE }));
+  const visible = filtered.slice(0, shown);
+
+  function onListKey(ev: React.KeyboardEvent<HTMLDivElement>) {
+    if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+    const rows = Array.from(ev.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="option"]'));
+    const i = rows.indexOf(document.activeElement as HTMLButtonElement);
+    if (i === -1 && ev.key === 'ArrowUp') return;
+    ev.preventDefault();
+    if (ev.key === 'ArrowDown' && i === rows.length - 1 && shown < filtered.length) grow();
+    rows[Math.max(0, Math.min(rows.length - 1, i + (ev.key === 'ArrowDown' ? 1 : -1)))]?.focus();
+  }
 
   function exportCsv() {
     downloadCsv(`liveiq-intelligence-${scope}-${new Date().toISOString().slice(0, 10)}.csv`,
@@ -304,12 +328,12 @@ function Hub() {
                 <ErrorState message="Couldn’t load the entity portfolio." onRetry={() => reload()} />
               ) : filtered.length === 0 ? (
                 <EmptyState title={query ? 'No matches' : `No ${isIndia ? 'Indian' : 'global'} entities here`} message={query ? `Nothing matches “${query}” in ${scope === 'india' ? 'India' : 'Global'}. Try the other market from the toggle above.` : 'Try a different filter.'} />
-              ) : filtered.map((e, i) => {
+              ) : visible.map((e, i) => {
                 const on = cmp.includes(e.id);
                 return (
-                  <motion.button key={e.id} type="button" role="option" aria-selected={compareMode ? on : selectedId === e.id} className={k.row} style={{ ['--inset' as string]: compareMode ? '56px' : '84px' }}
-                    onClick={() => pick(e)} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} whileTap={{ scale: 0.99 }}
-                    transition={{ duration: 0.28, delay: Math.min(i, 12) * 0.025, ease: [0.22, 1, 0.36, 1] }}>
+                  <button key={e.id} type="button" role="option" aria-selected={compareMode ? on : selectedId === e.id} className={`${k.row} ${i < 12 ? styles.rowEnter : ''}`}
+                    style={{ ['--inset' as string]: compareMode ? '56px' : '84px', ...(i < 12 ? { animationDelay: `${i * 25}ms` } : null) }}
+                    onClick={() => pick(e)}>
                     {compareMode ? <span className={styles.check} data-on={on}>{on && <Check size={13} strokeWidth={2.2} />}</span> : <span className={`${styles.rank} num-rounded`}>{sort === 'score' ? i + 1 : ''}</span>}
                     <span className={k.avatar}>{initials(e.name)}</span>
                     <span className={k.main}>
@@ -319,9 +343,10 @@ function Hub() {
                     <span className={styles.badge}><VerdictText score={e.composite_score} /></span>
                     <span className={`${k.trail} num-rounded`} style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '1.0625rem', minWidth: 44, justifyContent: 'flex-end' }}>{e.composite_score != null ? e.composite_score.toFixed(1) : '—'}</span>
                     {!compareMode && <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />}
-                  </motion.button>
+                  </button>
                 );
               })}
+              {shown < filtered.length && <LoadMore key={shown} onVisible={grow} />}
             </div>
           </GlassCard>
         </div>
