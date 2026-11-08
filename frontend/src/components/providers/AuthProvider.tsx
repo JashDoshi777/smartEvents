@@ -1,11 +1,13 @@
 'use client';
 
+/* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
+
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import {
   login as apiLogin, register as apiRegister, getMe, clearTokens, getAccessToken, logoutRemote,
-  AuthUser, LoginRequest, RegisterRequest,
+  AuthUser, LoginRequest, RegisterRequest, getRefreshTokenPublic,
 } from '@/lib/api';
 
 interface AuthContextValue {
@@ -26,6 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+  const [netError, setNetError] = useState(false);
 
   const refreshUser = useCallback(async () => {
     if (!getAccessToken()) {
@@ -34,10 +37,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
+      setNetError(false);
       const me = await getMe();
       setUser(me);
-    } catch {
-      clearTokens();
+    } catch (err) {
+      const m = err instanceof Error ? err.message : '';
+      // 5xx / offline is not a logout: keep the tokens and offer a retry instead.
+      if (/API 5\d\d|Network error|Failed to fetch|Load failed/i.test(m) && getRefreshTokenPublic()) setNetError(true);
+      else clearTokens();
       setUser(null);
     } finally {
       setLoading(false);
@@ -51,12 +58,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loading) return;
     const isPublic = PUBLIC_ROUTES.includes(pathname);
+    if (netError) return;
+    const search = new URLSearchParams(window.location.search); // read at run time: avoids a Suspense boundary in the root layout
     if (!user && !isPublic) {
-      router.replace('/login');
+      const here = pathname + (search.toString() ? `?${search.toString()}` : '');
+      router.replace(here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`);
     } else if (user && isPublic) {
-      router.replace('/');
+      const next = search.get('next');
+      // Only same-origin relative paths: blocks open redirects like //evil.com or https://evil.com
+      router.replace(next && /^\/(?!\/)/.test(next) && !next.startsWith('/login') ? next : '/');
     }
-  }, [loading, user, pathname, router]);
+  }, [loading, user, pathname, router, netError]);
 
   async function login(req: LoginRequest) {
     const res = await apiLogin(req);
@@ -94,6 +106,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // to be an instant navigation-away.
   const isPublic = PUBLIC_ROUTES.includes(pathname);
   const blockRender = loading || (!user && !isPublic);
+  if (netError && !loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-base)', padding: 24, textAlign: 'center' }}>
+        <div role="alert">
+          <p className="t-title3" style={{ fontWeight: 600 }}>Can’t reach LiveIQ</p>
+          <p className="t-callout text-secondary" style={{ margin: '8px 0 16px' }}>Your session is safe. Check your connection and try again.</p>
+          <button className="btn btn-primary" onClick={() => { setLoading(true); void refreshUser(); }}>Try again</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <AuthContext.Provider value={{ user, loading, login, register, logout }}>

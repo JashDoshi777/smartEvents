@@ -43,3 +43,14 @@ a.feedRow:active { opacity: .6; }
   .select { min-width: 0; width: 100%; } .selectWrap { width: 100%; }
   .list { max-height: none; }
 }
+
+.covRow { display: grid; grid-template-columns: 112px minmax(0, 1fr) 44px minmax(0, 150px); gap: 12px; align-items: center; width: 100%; min-height: 44px; padding: 6px 4px; border: 0; border-top: .5px solid var(--divider); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+.covRow:first-child { border-top: 0; }
+.covRow:hover { background: var(--fill-quaternary); }
+.covRow[aria-current="true"] .covName { color: var(--accent); }
+.covName { font-size: .9375rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.covTrack { height: 6px; border-radius: 999px; background: var(--fill-tertiary); overflow: hidden; display: block; }
+.covFill { display: block; height: 100%; border-radius: 999px; background: var(--text-primary); }
+.covNum { font-size: 1rem; text-align: right; }
+.covRivals { font-size: .75rem; color: var(--text-tertiary); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 560px) { .covRow { grid-template-columns: 92px minmax(0, 1fr) 40px; } .covRivals { display: none; } }

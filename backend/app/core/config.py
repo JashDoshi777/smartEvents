@@ -24,9 +24,12 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         try:
-            return json.loads(self.CORS_ORIGINS)
+            origins = json.loads(self.CORS_ORIGINS)
         except Exception:
             return ["http://localhost:3000"]
+        # Credentialed CORS must never use a wildcard origin.
+        origins = [o for o in origins if isinstance(o, str) and o.strip() and o.strip() != "*"]
+        return origins or ["http://localhost:3000"]
 
     # ─── Database ──────────────────────────────────────────────
     POSTGRES_URL: str
@@ -108,6 +111,19 @@ class Settings(BaseSettings):
         "case_sensitive": True,
         "extra": "ignore",  # Ignore unknown env vars — safe for dev
     }
+
+    def secret_key_warnings(self) -> List[str]:
+        """Human-readable problems with SECRET_KEY (never includes the key)."""
+        k = self.SECRET_KEY or ""
+        problems = []
+        if len(k) < 32:
+            problems.append("SECRET_KEY is shorter than 32 characters")
+        low = k.lower()
+        if any(w in low for w in ("change-me", "changeme", "change_me", "your-secret", "your_secret", "secret-key", "supersecret", "default", "example", "dev-secret", "test-secret")):
+            problems.append("SECRET_KEY looks like a placeholder/default value")
+        if len(set(k)) < 8:
+            problems.append("SECRET_KEY has very low entropy")
+        return problems
 
     def is_api_configured(self, api_name: str) -> bool:
         """Check if an API has credentials configured (not None AND not empty string)."""

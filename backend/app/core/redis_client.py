@@ -2,6 +2,7 @@
 LiveIQ — Redis Client (cache + rate limiting + session store)
 """
 
+import asyncio
 import redis.asyncio as aioredis
 from app.core.config import settings
 import structlog
@@ -19,6 +20,8 @@ def get_redis() -> aioredis.Redis:
             encoding="utf-8",
             decode_responses=True,
             max_connections=20,
+            socket_connect_timeout=1,
+            socket_timeout=1,
         )
     return _redis_client
 
@@ -34,10 +37,10 @@ async def close_redis_connection():
 async def check_redis_connection() -> bool:
     try:
         redis = get_redis()
-        await redis.ping()
+        await asyncio.wait_for(redis.ping(), timeout=2)
         return True
     except Exception as e:
-        logger.error("Redis connection failed", error=str(e))
+        logger.warning("Redis unavailable (optional)", error=type(e).__name__)
         return False
 
 

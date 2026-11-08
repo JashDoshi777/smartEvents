@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- legacy loosely-typed responses; tighten incrementally */
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 // ── Token storage ────────────────────────────────────────────────
@@ -11,6 +12,8 @@ export function getAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
+
+export const getRefreshTokenPublic = () => getRefreshToken();
 
 function getRefreshToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -31,7 +34,18 @@ export function clearTokens() {
 // SWR hooks firing at once) triggers exactly one refresh call, not N.
 let refreshInFlight: Promise<boolean> | null = null;
 
+/** Only a *rejected* refresh token ends the session; a network blip must not log the user out. */
+let lastRefreshNetworkError = false;
+
+/** Where to send an unauthenticated user: /login, remembering the page they wanted. */
+export function loginUrl(): string {
+  if (typeof window === 'undefined') return '/login';
+  const here = window.location.pathname + window.location.search;
+  return here === '/' || here.startsWith('/login') || here.startsWith('/register') ? '/login' : `/login?next=${encodeURIComponent(here)}`;
+}
+
 async function tryRefresh(): Promise<boolean> {
+  lastRefreshNetworkError = false;
   const refreshToken = getRefreshToken();
   if (!refreshToken) return false;
   if (!refreshInFlight) {
@@ -47,6 +61,7 @@ async function tryRefresh(): Promise<boolean> {
         setTokens(data.access_token, data.refresh_token);
         return true;
       } catch {
+        lastRefreshNetworkError = true;
         return false;
       } finally {
         refreshInFlight = null;
@@ -59,18 +74,22 @@ async function tryRefresh(): Promise<boolean> {
 async function apiFetch<T>(path: string, opts?: RequestInit, _isRetry = false): Promise<T> {
   const token = getAccessToken();
   const res = await fetch(`${BASE}${path}`, {
+    ...opts,
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(opts?.headers as Record<string, string> | undefined),
     },
-    ...opts,
   });
 
-  if (res.status === 401 && !_isRetry && !path.startsWith('/auth/')) {
+  // /auth/me must refresh too (an expired access token with a valid refresh token is a normal state).
+  const isCredentialCall = /^\/auth\/(login|register|refresh|logout)/.test(path);
+  if (res.status === 401 && !_isRetry && !isCredentialCall) {
     const refreshed = await tryRefresh();
     if (refreshed) return apiFetch<T>(path, opts, true);
+    if (lastRefreshNetworkError) throw new Error('Network error — please retry');
     clearTokens();
-    if (typeof window !== 'undefined') window.location.href = '/login';
+    if (typeof window !== 'undefined') window.location.href = loginUrl();
     throw new Error('Session expired — please log in again');
   }
 
@@ -176,10 +195,10 @@ export const searchEntities = (q: string, limit = 6) =>
   apiFetch<{ results: EntitySearchResult[]; total: number }>(`/entities/search?q=${encodeURIComponent(q)}&limit=${limit}`);
 
 // ── Executive ──────────────────────────────────────────────────
-export const getKPIs          = () => apiFetch<KPIResponse>('/executive/kpis');
-export const getBriefing      = () => apiFetch<BriefingResponse>('/executive/briefing');
-export const getPortfolio     = (type?: string) =>
-  apiFetch<PortfolioResponse>(`/executive/portfolio${type ? `?entity_type=${type}` : ''}`);
+export const getKPIs          = (market: 'india' | 'global' | 'all' = 'all') => apiFetch<KPIResponse>(`/executive/kpis?market=${market}`);
+export const getBriefing      = (market: 'india' | 'global' | 'all' = 'all') => apiFetch<BriefingResponse>(`/executive/briefing?market=${market}`);
+export const getPortfolio     = (type?: string, market: 'india' | 'global' | 'all' = 'all') =>
+  apiFetch<PortfolioResponse>(`/executive/portfolio?market=${market}${type ? `&entity_type=${encodeURIComponent(type)}` : ''}`);
 
 // Returns a Blob (not JSON) — caller is responsible for triggering the
 // browser download via a temporary object URL. The endpoint synchronously
@@ -224,7 +243,10 @@ export async function downloadExecutiveReportPdf(): Promise<Blob> {
 
 // ── Dashboard ──────────────────────────────────────────────────
 export const getDashboardSummary = () => apiFetch<DashboardSummary>('/dashboard/summary');
-export const getDashboardAlerts  = () => apiFetch<AlertsResponse>('/dashboard/alerts');
+export const getDashboardAlerts  = (market: 'india' | 'global' | 'all' = 'all') => apiFetch<AlertsResponse>(`/dashboard/alerts?market=${market}`);
+export interface ScoreMover { id: string; name: string; category: string | null; type: string; score: number; previous_score: number; delta: number; as_of: string | null; previous_as_of: string | null }
+export interface MoversResponse { risers: ScoreMover[]; fallers: ScoreMover[]; compared: number; generated_at: string }
+export const getDashboardMovers  = (market: 'india' | 'global' | 'all' = 'all', limit = 5) => apiFetch<MoversResponse>(`/dashboard/movers?market=${market}&limit=${limit}`);
 
 // ── Cities ─────────────────────────────────────────────────────
 export const getCities        = (tier?: number) =>
@@ -362,7 +384,7 @@ export interface PortfolioResponse {
 
 export interface PortfolioEntity {
   rank: number; id: string; name: string; type: string; category: string;
-  country: string; is_international: boolean; composite_score: number | null;
+  country: string; primary_market?: string | null; is_international: boolean; composite_score: number | null;
   google_trend_score: number | null; news_mentions_7d: number | null;
   health: string; last_updated: string | null;
 }
@@ -445,6 +467,7 @@ export interface DealModelResponse {
   scenarios: { conservative: DealScenario; expected: DealScenario; optimistic: DealScenario };
   break_even: { tickets: number | null; fill_rate_pct: number | null; achievable: boolean };
   risk_level: 'Low' | 'Medium' | 'High';
+  cost_model?: { venue_pct: number; ops_pct: number };
   cost_model_note: string;
   market_context: {
     predicthq: {
@@ -472,6 +495,7 @@ export interface PairRecommendation {
   shared_genres: string[];
   similarity_score: number;
   combined_booking_fee_estimate: number | null;
+  fee_complete?: boolean;
 }
 
 export interface PairRecommendResponse {
@@ -668,7 +692,7 @@ export interface CompetitorIntelligence {
   city: string; total_ticketmaster_events_live: number;
   platforms: Record<string, CompetitorPlatform>;
   district_opportunity: { city_tier: number | string; district_active: boolean; recommendation: string };
-  data_sources: string[]; note?: string;
+  data_sources: string[]; note?: string; news_available?: boolean;
 }
 export const getCompetitorIntelligence = (city: string) =>
   apiFetchStrict<CompetitorIntelligence>(`/competitors/intelligence?city=${encodeURIComponent(city)}`);
@@ -682,18 +706,19 @@ export interface CompetitorGapsResponse { gaps: CompetitorGapItem[]; total: numb
 export const getCompetitorGapList = () => apiFetchStrict<CompetitorGapsResponse>('/competitors/gaps');
 
 export interface CompetitorArticle { platform: string; title: string | null; source: string | null; published_at: string | null; url: string | null }
-export interface CompetitorFeedResponse { articles: CompetitorArticle[]; total: number; platforms_monitored: string[]; note?: string }
+export interface CompetitorFeedResponse { articles: CompetitorArticle[]; total: number; platforms_monitored: string[]; note?: string; news_available?: boolean }
 export const getCompetitorFeed = (limit = 20) => apiFetchStrict<CompetitorFeedResponse>(`/competitors/activity-feed?limit=${limit}`);
 
 export interface CityScores { nightlife: number | null; sports_affinity: number | null; arts_culture: number | null; comedy_market: number | null; music_market: number | null; composite: number | null }
 export interface MarketCity {
-  id: string; name: string; state: string; tier: number; population: number | null; metro_population: number | null;
+  id: string; name: string; state: string; tier: number | null; monsoon_months?: number[]; festival_months?: { high_demand?: number[]; low_demand?: number[] } | null; population: number | null; metro_population: number | null;
   avg_monthly_income: number | null; youth_population_pct: number | null; top_categories: string[] | null;
   active_on_district: boolean; scores: CityScores;
 }
 export const getMarketCities = () => apiFetchStrict<{ cities: MarketCity[]; total: number }>('/cities/');
 
 export interface CityIntelDetail extends MarketCity {
+  monsoon_months?: number[];
   festival_months?: { festivals?: Record<string, number>; low_demand?: number[]; high_demand?: number[] } | null;
   intelligence: {
     expansion_recommendation: string; peak_season_months: string[]; monsoon_risk: string; income_tier: string; youth_index: string;
@@ -707,11 +732,13 @@ export interface CityRestaurant {
   id: string; name: string; venue_type: string | null; cuisines: string[]; address: string | null;
   latitude: number | null; longitude: number | null; phone: string | null; website: string | null; sources: string[];
 }
-export const getCityRestaurants = (city: string, o: { venue_type?: string; cuisine?: string; limit?: number } = {}) => {
+export const getCityRestaurants = (city: string, o: { venue_type?: string; cuisine?: string; q?: string; limit?: number; offset?: number } = {}) => {
   const q = new URLSearchParams({ limit: String(o.limit ?? 100) });
   if (o.venue_type) q.set('venue_type', o.venue_type);
   if (o.cuisine) q.set('cuisine', o.cuisine);
-  return apiFetchStrict<{ city: string; restaurants: CityRestaurant[]; total: number; data_note?: string }>(`/cities/${encodeURIComponent(city)}/restaurants?${q}`);
+  if (o.q) q.set('q', o.q);
+  if (o.offset) q.set('offset', String(o.offset));
+  return apiFetchStrict<{ city: string; restaurants: CityRestaurant[]; total: number; returned?: number; offset?: number; data_note?: string }>(`/cities/${encodeURIComponent(city)}/restaurants?${q}`);
 };
 
 export const getVenueCalendarStrict = (venueId: string, months = 3) =>
@@ -722,7 +749,7 @@ export interface PricingResult {
   entity: { id: string; name: string; type: string | null; category: string | null; is_international: boolean };
   recommendation: {
     proposed_price: number; recommended_price: number; price_tier: string; confidence: string; reasoning: string;
-    predicted_fill_rate: number | null; sensitivity_curve: { price: number; attendance_pct: number }[];
+    predicted_fill_rate: number | null; predicted_fill_rate_at_recommended?: number | null; sensitivity_curve: { price: number; attendance_pct: number }[];
   };
   signals: { composite_score: number; google_trend_score: number; demand_score: number; city_multiplier: number; capacity_factor: number; season_factor: number; international_factor: number };
   benchmarks: { category: string; floor: number; sweet_spot: number; premium: number; ultra_premium: number };
@@ -748,6 +775,7 @@ export interface WatchlistEntity {
   category: string | null;
   is_international: boolean;
   watched_since: string | null;
+  composite_score?: number | null; score_at_watch?: number | null; score_delta?: number | null;
 }
 export interface WatchlistResponse { watchlist: WatchlistEntity[]; total: number }
 export interface NotificationsResponse { notifications: NotificationItem[]; total: number }
@@ -825,13 +853,61 @@ export interface EventRow {
   event_date: string | null; venue: string | null; city: string | null;
   ticket_price_min: number | null; ticket_price_max: number | null;
   total_capacity: number | null; tickets_sold: number | null; fill_rate: number | null; booking_url: string | null;
+  is_upcoming?: boolean;
 }
 export interface EventsResponse { total: number; events: EventRow[] }
-export const getEvents = (p?: { limit?: number; offset?: number; source?: string }) => {
+export interface EventsQuery { limit?: number; offset?: number; source?: string; city?: string; category?: string; q?: string; when?: 'all' | 'upcoming' | 'past'; order?: 'asc' | 'desc'; date_from?: string; date_to?: string }
+export const getEvents = (p?: EventsQuery) => {
   const q = new URLSearchParams();
   if (p?.limit) q.set('limit', String(p.limit));
   if (p?.offset) q.set('offset', String(p.offset));
   if (p?.source) q.set('source', p.source);
+  if (p?.city) q.set('city', p.city);
+  if (p?.category) q.set('category', p.category);
+  if (p?.q) q.set('q', p.q);
+  if (p?.when && p.when !== 'all') q.set('when', p.when);
+  if (p?.order) q.set('order', p.order);
   const qs = q.toString();
   return apiFetch<EventsResponse>(`/events${qs ? `?${qs}` : ''}`);
 };
+
+
+// ══ Events summary / venue availability / competitor coverage (added) ═══════════
+export interface KeyCount { key: string; count: number }
+export interface EventsSummary {
+  total: number; upcoming: number; past: number; next_30_days: number; with_fill_rate: number; without_venue: number;
+  by_month: { month: string; count: number }[]; by_category: KeyCount[]; by_source: KeyCount[]; by_city: KeyCount[];
+  facets: { sources: KeyCount[]; categories: KeyCount[]; cities: KeyCount[] }; timezone: string; as_of: string;
+}
+export const getEventsSummary = (p?: Pick<EventsQuery, 'source' | 'city' | 'category' | 'q' | 'when'>) => {
+  const q = new URLSearchParams();
+  if (p?.source) q.set('source', p.source);
+  if (p?.city) q.set('city', p.city);
+  if (p?.category) q.set('category', p.category);
+  if (p?.q) q.set('q', p.q);
+  if (p?.when && p.when !== 'all') q.set('when', p.when);
+  const qs = q.toString();
+  return apiFetchStrict<EventsSummary>(`/events/summary${qs ? `?${qs}` : ''}`);
+};
+export const getEventsStrict = (p?: EventsQuery) => {
+  const q = new URLSearchParams();
+  Object.entries(p ?? {}).forEach(([k, v]) => { if (v !== undefined && v !== '' && !(k === 'when' && v === 'all')) q.set(k, String(v)); });
+  const qs = q.toString();
+  return apiFetchStrict<EventsResponse>(`/events${qs ? `?${qs}` : ''}`);
+};
+
+export interface OpenWeekendVenue { id: string; name: string; city: string; capacity: number | null; open_weekends: string[]; open_count: number; booked_count: number; total_weekends: number }
+export interface VenueAvailability { city: string; min_capacity: number; range: { start: string; end: string; months: number }; total: number; venues: OpenWeekendVenue[]; data_note: string; timezone: string }
+export const getVenueAvailability = (city: string, minCapacity: number, months = 3) =>
+  apiFetchStrict<VenueAvailability>(`/venues/availability?city=${encodeURIComponent(city)}&min_capacity=${minCapacity}&months=${months}`);
+
+export interface CoverageCity {
+  city: string; state: string | null; tier: number; market_score: number | null; district_active: boolean;
+  bookmyshow: boolean; insider: boolean; ticketmaster_india: boolean; events_by_source: Record<string, number>;
+}
+export const getCompetitorCoverage = () => apiFetchStrict<{ cities: CoverageCity[]; total: number; note?: string }>('/competitors/coverage');
+
+export interface CityGap { city: string; state: string | null; tier: number; composite_market_score: number; population: number | null; avg_monthly_income: number | null; opportunity_score: number; rank: number; top_categories: string[]; reason: string }
+export const getExpansionGaps = () => apiFetchStrict<{ gaps: CityGap[]; total: number; methodology: string }>('/cities/gaps');
+
+export interface CopilotStreamSources { sources: string[] }

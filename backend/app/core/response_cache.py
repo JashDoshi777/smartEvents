@@ -14,6 +14,19 @@ from memory:
 Authentication is still enforced: a valid, unexpired access JWT is required
 before any cached byte is served. Per-user routes (notifications, watchlist,
 auth, writes) are never cached.
+
+Safety rules (each covered by tests/unit/test_response_cache.py):
+  * only GET, only 200, only JSON bodies are stored; errors, degraded AI
+    fallbacks (`x-degraded` header / "temporarily unavailable") and responses
+    carrying Set-Cookie / Cache-Control: private|no-store are never stored;
+  * the key is path + query. Rules therefore may ONLY list routes whose body
+    is identical for every authenticated role/user. Role-gated GETs
+    (require_roles) and per-user variants (`exclude_watchlisted`) must not be
+    cached - `_BYPASS_QUERY` and test_no_role_gated_get_is_cached enforce this;
+  * `/executive/report/pdf` and everything not in _RULES is never cached;
+  * a request with `Cache-Control: no-cache` is computed fresh and not stored
+    (used by perf tooling and available to clients);
+  * POST /admin/cache/clear (executive) empties the cache; stats are in /health.
 """
 
 from __future__ import annotations
@@ -41,14 +54,18 @@ _RULES: list[tuple[re.Pattern, int, int]] = [
     (re.compile(r"^/executive/(kpis|portfolio)$"), 180, 3600),
     (re.compile(r"^/executive/briefing$"), 900, 7200),  # LLM call — expensive
     (re.compile(r"^/recommend/entities$"), 300, 3600),
-    (re.compile(r"^/events$"), 300, 3600),
+    (re.compile(r"^/events(/summary)?$"), 300, 3600),
     (re.compile(r"^/psychology/"), 600, 7200),
     (re.compile(r"^/intelligence/[^/]+/forecast$"), 600, 7200),
     (re.compile(r"^/copilot/models$"), 3600, 86400),
     (re.compile(r"^/venues/[^/]+/calendar$"), 300, 3600),
+    (re.compile(r"^/venues/availability$"), 300, 3600),
 ]
 
 MAX_ENTRIES = 600
+MAX_QUERY_LEN = 512
+# Per-user variants of otherwise-global routes: never cache these.
+_BYPASS_QUERY = re.compile(r"(^|&)exclude_watchlisted=(true|1|yes|on)", re.I)
 
 
 @dataclass
@@ -78,8 +95,16 @@ def invalidate_all() -> int:
     return n
 
 
+_STATS = {"hits": 0, "stale": 0, "misses": 0, "bypass": 0, "errors_not_cached": 0}
+
+
 def cache_stats() -> dict:
-    return {"entries": len(_CACHE), "refreshing": len(_REFRESHING)}
+    served = _STATS["hits"] + _STATS["stale"] + _STATS["misses"]
+    return {
+        "entries": len(_CACHE), "refreshing": len(_REFRESHING), "max_entries": MAX_ENTRIES,
+        **_STATS,
+        "hit_ratio": round((_STATS["hits"] + _STATS["stale"]) / served, 3) if served else None,
+    }
 
 
 async def _capture(app, scope) -> tuple[int, list[tuple[bytes, bytes]], bytes]:
@@ -123,15 +148,26 @@ class ResponseCacheMiddleware:
             # Let the real app produce the proper 401.
             return await self.app(scope, receive, send)
 
+        qs = scope.get("query_string", b"").decode("latin-1")
+        if (
+            len(qs) > MAX_QUERY_LEN
+            or _BYPASS_QUERY.search(qs)
+            or b"no-cache" in headers.get(b"cache-control", b"").lower()
+        ):
+            _STATS["bypass"] += 1
+            return await self.app(scope, receive, send)
+
         ttl, swr = rule
         key = f"{path}?{scope.get('query_string', b'').decode('latin-1')}"
         now = time.monotonic()
         entry = _CACHE.get(key)
 
         if entry and now < entry.fresh_until:
+            _STATS["hits"] += 1
             return await self._reply(send, entry, "HIT")
 
         if entry and now < entry.stale_until:
+            _STATS["stale"] += 1
             self._refresh_in_background(key, scope, ttl, swr)
             return await self._reply(send, entry, "STALE")
 
@@ -140,20 +176,34 @@ class ResponseCacheMiddleware:
         async with lock:
             entry = _CACHE.get(key)
             if entry and time.monotonic() < entry.stale_until:
+                _STATS["hits"] += 1
                 return await self._reply(send, entry, "HIT")
             status, hdrs, body = await _capture(self.app, scope)
             if status == 200:
                 self._store(key, status, hdrs, body, ttl, swr)
                 entry = _CACHE.get(key)
                 if entry is not None:
+                    _STATS["misses"] += 1
                     return await self._reply(send, entry, "MISS")
-        # Non-200 — pass through uncached.
+            else:
+                _STATS["errors_not_cached"] += 1
+            if key not in _CACHE:
+                _LOCKS.pop(key, None)  # don't let uncached keys leak lock objects
+        # Non-200 / unstorable — pass through uncached.
         await send({"type": "http.response.start", "status": status, "headers": hdrs})
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
     def _store(key, status, hdrs, body, ttl, swr):
         if b"temporarily unavailable" in body:  # degraded AI fallback — never pin it in cache
+            return
+        lowered = {k.lower(): v.lower() for k, v in hdrs}
+        if b"x-degraded" in lowered or b"set-cookie" in lowered:
+            return
+        cc = lowered.get(b"cache-control", b"")
+        if b"private" in cc or b"no-store" in cc:
+            return
+        if b"json" not in lowered.get(b"content-type", b"json"):
             return
         if len(_CACHE) >= MAX_ENTRIES:
             oldest = min(_CACHE, key=lambda k: _CACHE[k].stale_until)

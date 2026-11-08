@@ -1,17 +1,20 @@
 'use client';
 
+/* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
+
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import useSWR from 'swr';
-import { CheckCircle2, XCircle, Moon, Sun, Server, Database, HardDrive, Star, FileDown, LogOut, ChevronRight, Globe2, User as UserIcon, Loader2 } from 'lucide-react';
+import { CheckCircle2, XCircle, Moon, Sun, Server, Database, HardDrive, Star, FileDown, ChevronRight, Globe2, Bell, User as UserIcon, Loader2 } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
-import { Segmented } from '@/components/ui/Controls';
+import { Segmented, Switch } from '@/components/ui/Controls';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorState } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
 import { useTheme } from '@/components/providers/ThemeProvider';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useMarketScope, MarketScope } from '@/components/providers/MarketScopeProvider';
+import { readWatchlistOnly, writeWatchlistOnly } from '@/components/layout/NotificationBell';
 import { getHealth, getWatchlist, downloadExecutiveReportPdf } from '@/lib/api';
 import { num } from '@/lib/format';
 import styles from './page.module.css';
@@ -48,6 +51,8 @@ export default function SettingsPage() {
   const health = useSWR('health', getHealth, { refreshInterval: 30000 });
   const watch = useSWR('watchlist', () => getWatchlist());
   const [exporting, setExporting] = useState(false);
+  const [watchOnly, setWatchOnly] = useState(false);
+  useEffect(() => setWatchOnly(readWatchlistOnly()), []);
   const canExport = user?.role === 'executive' || user?.role === 'analyst';
 
   const h = health.data;
@@ -99,6 +104,14 @@ export default function SettingsPage() {
               <span className="t-footnote text-tertiary">What dashboards show first</span>
             </div>
             <Segmented<MarketScope> ariaLabel="Default market" value={scope} onChange={setScope} options={[{ value: 'india', label: 'India' }, { value: 'global', label: 'Global' }]} />
+          </div>
+          <div className="list-row">
+            <div className={styles.iconBox}><Bell size={20} strokeWidth={1.6} /></div>
+            <div className={styles.grow}>
+              <span className="t-callout" style={{ fontWeight: 600 }}>Notifications: watchlist only</span>
+              <span className="t-footnote text-tertiary">Hide signals for acts you don’t watch</span>
+            </div>
+            <Switch checked={watchOnly} onChange={v => { setWatchOnly(v); writeWatchlistOnly(v); }} label="Show only watchlist notifications" />
           </div>
         </Section>
 

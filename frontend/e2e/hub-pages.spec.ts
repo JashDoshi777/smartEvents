@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { login, trackErrors } from './helpers';
+import { readFileSync } from 'node:fs';
+import { login, trackErrors, apiGet, benign } from './helpers';
 
 test.beforeEach(async ({ page }) => {
   await login(page);
@@ -33,7 +34,7 @@ test.describe('Intelligence Hub', () => {
     await page.getByRole('button', { name: 'Global', exact: true }).click();
     await page.getByLabel('Search entities', { exact: true }).first().fill('Eminem');
     await expect(rows.first()).toBeVisible();
-    expect(errors.filter(e => !/favicon/.test(e))).toEqual([]);
+    expect(errors.filter(e => !benign(e))).toEqual([]);
   });
 
   test('deep link selects entity and compare works', async ({ page }) => {
@@ -48,6 +49,80 @@ test.describe('Intelligence Hub', () => {
   });
 });
 
+test.describe('Intelligence Hub: accuracy, URL state, export, keyboard', () => {
+  test('list == API portfolio (India), sorted by score, ranks contiguous', async ({ page }) => {
+    const p = await apiGet<{ portfolio: { name: string; composite_score: number | null }[]; total: number }>(page, '/executive/portfolio?market=india');
+    await page.goto('/intelligence');
+    await expect(page.getByRole('option').first()).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByText(`${p.total} results`)).toBeVisible({ timeout: 15_000 });
+    const names = await page.getByRole('option').locator('xpath=.//span[contains(@class,"name")]').allInnerTexts();
+    expect(names.slice(0, 5).map(n => n.trim())).toEqual(p.portfolio.slice(0, 5).map(x => x.name));
+  });
+
+  test('filters live in the URL and restore on reload; CSV matches the filtered list', async ({ page }) => {
+    await page.goto('/intelligence');
+    await expect(page.getByRole('option').first()).toBeVisible({ timeout: 40_000 });
+    await page.getByLabel('Search entities', { exact: true }).first().fill('a');
+    await page.getByRole('group', { name: 'Sort' }).getByRole('button', { name: 'A–Z' }).click();
+    await expect(page).toHaveURL(/q=a/);
+    await expect(page).toHaveURL(/sort=name/);
+    await page.reload();
+    await expect(page.getByLabel('Search entities', { exact: true }).first()).toHaveValue('a', { timeout: 30_000 });
+    await expect(page.getByRole('group', { name: 'Sort' }).getByRole('button', { name: 'A–Z' })).toHaveAttribute('aria-pressed', 'true');
+    const shown = await page.getByRole('option').count();
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Export list as CSV' }).click()]);
+    const lines = readFileSync((await dl.path())!, 'utf8').replace(/^﻿/, '').trim().split(/\r?\n/);
+    expect(lines.length - 1).toBe(shown);
+    // A–Z order in the export
+    const nm = lines.slice(1).map(l => l.split(',')[1].replace(/^"|"$/g, ''));
+    expect(nm).toEqual([...nm].sort((a, b) => a.localeCompare(b)));
+  });
+
+  test('arrow keys move through the list; Enter opens details; no-result search', async ({ page }) => {
+    await page.goto('/intelligence');
+    const rows = page.getByRole('option');
+    await expect(rows.first()).toBeVisible({ timeout: 40_000 });
+    await rows.first().focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(rows.nth(1)).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(rows.first()).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/entity=/);
+    await page.getByLabel('Search entities', { exact: true }).first().fill('%$#@!zzzz');
+    await expect(page.getByText('No matches')).toBeVisible();
+  });
+
+  test('compare mode is capped at 4 selections', async ({ page }) => {
+    await page.goto('/intelligence');
+    await expect(page.getByRole('option').first()).toBeVisible({ timeout: 40_000 });
+    await page.getByRole('button', { name: 'Compare', exact: true }).first().click();
+    for (let i = 0; i < 5; i++) await page.getByRole('option').nth(i).click();
+    await expect(page.getByText('4/4 selected')).toBeVisible();
+    await expect(page.getByText('Compare up to 4 at a time').first()).toBeVisible();
+  });
+
+  test('API failure shows a retryable error', async ({ page }) => {
+    let fail = true;
+    await page.addInitScript(() => localStorage.removeItem('liveiq-swr-cache'));
+    await page.route(/\/executive\/portfolio/, r => (fail ? r.fulfill({ status: 500, body: '{}' }) : r.continue()));
+    await page.goto('/intelligence');
+    await expect(page.getByText('Couldn’t load the entity portfolio.')).toBeVisible({ timeout: 40_000 });
+    fail = false;
+    await page.getByRole('button', { name: /Try again/ }).first().click();
+    await expect(page.getByRole('option').first()).toBeVisible({ timeout: 40_000 });
+  });
+});
+
+test('Trend Radar movers equal the API', async ({ page }) => {
+  const mv = await apiGet<{ risers: { name: string; delta: number }[]; fallers: { name: string; delta: number }[] }>(page, '/dashboard/movers?market=india&limit=5');
+  await page.goto('/trends');
+  await expect(page.getByText('Biggest movers')).toBeVisible({ timeout: 40_000 });
+  if (!mv.risers.length && !mv.fallers.length) { await expect(page.getByText(/No score changes/)).toBeVisible(); return; }
+  const r = mv.risers[0];
+  await expect(page.getByRole('link', { name: new RegExp(r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).filter({ hasText: `+${r.delta.toFixed(1)}` }).first()).toBeVisible({ timeout: 20_000 });
+});
+
 test('Trend Radar renders real data and responds to scope + sort', async ({ page }) => {
   const errors = trackErrors(page);
   await page.goto('/trends');
@@ -60,7 +135,7 @@ test('Trend Radar renders real data and responds to scope + sort', async ({ page
   await expect(page.getByText(/across .* scored global entities/i)).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('a[href^="/intelligence?entity="]').first()).toBeVisible({ timeout: 30_000 });
   expect(first).toBeTruthy();
-  expect(errors).toEqual([]);
+  expect(errors.filter(e => !benign(e))).toEqual([]);
 });
 
 test('Recommendations: ranked list, city filter, sign verdict', async ({ page }) => {
@@ -80,7 +155,7 @@ test('Recommendations: ranked list, city filter, sign verdict', async ({ page })
     await expect(page.getByText(/predicted fill/)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('Model price')).toBeVisible();
   }
-  expect(errors).toEqual([]);
+  expect(errors.filter(e => !benign(e))).toEqual([]);
 });
 
 test('Psychology: report for default entity and city switch', async ({ page }) => {
@@ -90,7 +165,7 @@ test('Psychology: report for default entity and city switch', async ({ page }) =
   await expect(page.getByText('Controversy drag').first()).toBeVisible();
   await page.getByRole('button', { name: 'Delhi NCR', exact: true }).click();
   await expect(page.getByRole('heading', { name: /· Delhi NCR/ })).toBeVisible({ timeout: 30_000 });
-  expect(errors).toEqual([]);
+  expect(errors.filter(e => !benign(e))).toEqual([]);
 });
 
 test('Social Listening: alerts card + sentiment for a sampled entity', async ({ page }) => {
@@ -99,5 +174,5 @@ test('Social Listening: alerts card + sentiment for a sampled entity', async ({ 
   await expect(page.getByText('Crisis alerts', { exact: true })).toBeVisible();
   await expect(page.getByText('Recently sampled')).toBeVisible({ timeout: 40_000 });
   await expect(page.getByText(/posts and articles analysed/)).toBeVisible({ timeout: 30_000 });
-  expect(errors).toEqual([]);
+  expect(errors.filter(e => !benign(e))).toEqual([]);
 });

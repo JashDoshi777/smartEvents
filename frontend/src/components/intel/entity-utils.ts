@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import useSWR from 'swr';
 import { useMarketScope, isIndianEntity } from '@/components/providers/MarketScopeProvider';
 import { getPortfolio, PortfolioEntity } from '@/lib/api';
@@ -31,8 +32,9 @@ export function initials(name: string) {
 /** Portfolio scoped by the global India/Global toggle. Shared SWR key so pages reuse the cache. */
 export function useScopedPortfolio() {
   const { scope } = useMarketScope();
+  // `primary_market` comes from the backend so the client split is identical to market_clause().
   const q = useSWR('portfolio/all', () => getPortfolio(), { refreshInterval: 180000 });
-  const all: PortfolioEntity[] = q.data?.portfolio ?? [];
-  const scoped = all.filter(e => (scope === 'india' ? isIndianEntity(e) : !isIndianEntity(e)));
+  const all: PortfolioEntity[] = useMemo(() => q.data?.portfolio ?? [], [q.data]);
+  const scoped = useMemo(() => all.filter(e => (scope === 'india' ? isIndianEntity(e) : !isIndianEntity(e))), [all, scope]);
   return { ...q, all, scoped, scope };
 }

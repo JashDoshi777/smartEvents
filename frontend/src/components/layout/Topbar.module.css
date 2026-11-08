@@ -57,9 +57,10 @@
 .logoutBtn:hover { background: var(--negative-dim); }
 
 @media (max-width: 900px) {
-  .menuBtn { display: grid; }
+  .menuBtn { display: grid; width: 40px; height: 40px; }
+  .actions :global(.btn-icon), .userAvatar { width: 40px; height: 40px; }
   .scopeWrap, .searchWrap { display: none; }
-  .searchTrigger { width: 38px; padding: 0; justify-content: center; border-radius: 50%; height: 38px; }
+  .searchTrigger { width: 40px; padding: 0; justify-content: center; border-radius: 50%; height: 40px; }
   .searchText, .kbd { display: none; }
   .subtitle { display: none; }
 }

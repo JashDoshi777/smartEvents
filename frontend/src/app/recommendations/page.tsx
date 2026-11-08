@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
+
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
@@ -14,7 +16,7 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { EntityPicker } from '@/components/intel/EntityPicker';
 import { ScoreRing } from '@/components/intel/ScoreRing';
-import { initials, scoreColor, useScopedPortfolio } from '@/components/intel/entity-utils';
+import { initials, useScopedPortfolio } from '@/components/intel/entity-utils';
 import { getCities, getRankedRecommendations, getSignVerdict, SignVerdictResponse } from '@/lib/api';
 import { inr, num } from '@/lib/format';
 import k from '@/components/intel/Kit.module.css';
@@ -41,7 +43,7 @@ function Content() {
   const [city, setCity] = useState('');
 
   const cities = useSWR('cities/all', () => getCities());
-  const cityList = cities.data?.cities ?? [];
+  const cityList = useMemo(() => cities.data?.cities ?? [], [cities.data]);
   const rec = useSWR(['recommend', scope, category, city], () => getRankedRecommendations({ category, city, isInternational: !isIndia, limit: 20 }), { keepPreviousData: true });
   const items = rec.data?.recommendations ?? [];
   const { scoped, all, isLoading: pLoading } = useScopedPortfolio();

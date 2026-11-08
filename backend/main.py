@@ -19,13 +19,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 import structlog
+import logging
+
+# httpx logs full request URLs at INFO — some upstream APIs (NewsAPI, YouTube) take the key as a query param.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 from app.core.config import settings
+from app.core.limiter import limiter
+from app.core.errors import register_exception_handlers
+from app.core.middleware import RequestContextMiddleware, ErrorBoundaryMiddleware
 from app.core.database import check_db_connection, AsyncSessionLocal
 from app.core.response_cache import ResponseCacheMiddleware, warm_cache
 import asyncio
@@ -48,6 +55,7 @@ from app.api.routes import (
     recommend,
     psychology,
     health as health_router,
+    admin,
 )
 from app.api.routes import dashboard
 from app.api.routes import events
@@ -57,29 +65,23 @@ from app.api.routes import forecast
 from app.api.routes import watchlist
 from app.api.routes import venue_calendar
 
+# Logging: plain (no rich "locals" dump - frame locals can contain secrets/PII),
+# request_id bound per request by RequestContextMiddleware.
+import logging as _logging
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.ConsoleRenderer(colors=False, exception_formatter=structlog.dev.plain_traceback),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(getattr(_logging, str(settings.LOG_LEVEL).upper(), _logging.INFO)),
+)
 logger = structlog.get_logger()
 
-# Per-IP, in-memory (no Redis storage backend configured — acceptable for
-# a single-process dev/small deployment; would need a shared storage_uri
-# to be correct across multiple backend processes/instances).
-# RATE_LIMIT_PER_MINUTE is the default applied to every route; individual
-# routes can override with @limiter.limit("N/minute") if they need a
-# different ceiling (e.g. auth endpoints tighter, health checks looser).
-#
-# config_filename="__no_such_file__": Limiter.__init__ unconditionally
-# does `open(".env")` (via Starlette's Config) whenever a .env exists in
-# the cwd, with no explicit encoding — on Windows that's the locale
-# default (cp1252), which can't decode this repo's genuinely-UTF-8 .env
-# (it has box-drawing header comments, e.g. "═"), crashing at import
-# time. Passing a filename that doesn't exist skips that read entirely
-# (Config just warns and moves on) — this app already loads its own
-# settings via pydantic-settings, so slowapi's separate config file
-# support isn't needed anyway.
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=[f"{settings.RATE_LIMIT_PER_MINUTE}/minute"],
-    config_filename="__no_such_file__",
-)
+# Rate limiter lives in app/core/limiter.py (shared with the auth routes).
 
 
 WARM_PATHS = [
@@ -132,6 +134,11 @@ async def lifespan(app: FastAPI):
     db_ok, mongo_ok, redis_ok = await asyncio.gather(
         check_db_connection(), check_mongo_connection(), check_redis_connection()
     )
+
+    for problem in settings.secret_key_warnings():
+        logger.warning("SECURITY: " + problem + " - set a long random SECRET_KEY before deploying")
+    if settings.APP_ENV == "production" and settings.DEBUG:
+        logger.warning("SECURITY: DEBUG is enabled in production (exposes /docs)")
 
     if not db_ok:
         logger.warning("PostgreSQL not reachable at startup")
@@ -186,19 +193,25 @@ def create_app() -> FastAPI:
     # individually decorated with @limiter.limit(...), and default_limits
     # would silently do nothing.
     app.add_middleware(SlowAPIMiddleware)
-    app.add_middleware(ResponseCacheMiddleware)
+    app.add_middleware(ErrorBoundaryMiddleware)    # unhandled exception -> JSON 500/503 (inside CORS)
+    app.add_middleware(ResponseCacheMiddleware)    # outside the boundary: never caches error bodies
+    app.add_middleware(RequestContextMiddleware)   # request id, access log, security headers
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins_list,
+        allow_origins=settings.cors_origins_list,   # explicit origins only (no "*" with credentials)
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID", "Cache-Control"],
+        expose_headers=["X-Request-ID", "X-Cache", "Retry-After"],
+        max_age=600,
     )
+    register_exception_handlers(app)
 
     # ─── Routers ───────────────────────────────────────────────
     app.include_router(health_router.router, tags=["System"])
     app.include_router(auth.router, prefix="/auth", tags=["Auth"])
+    app.include_router(admin.router, prefix="/admin", tags=["Admin"])
     app.include_router(entities.router, prefix="/entities", tags=["Entity Intelligence"])
     app.include_router(trends.router, prefix="/trends", tags=["Trend Radar"])
     app.include_router(cities.router, prefix="/cities", tags=["City Intelligence"])
@@ -217,15 +230,6 @@ def create_app() -> FastAPI:
     app.include_router(copilot.router, prefix="/copilot", tags=["AI Copilot"])
     app.include_router(recommend.router, prefix="/recommend", tags=["AI Recommendation"])
     app.include_router(psychology.router, prefix="/psychology", tags=["Psychological Demand Analysis"])
-
-    # ─── Global exception handler ──────────────────────────────
-    @app.exception_handler(Exception)
-    async def global_exception_handler(request, exc):
-        logger.exception("Unhandled exception", exc_info=exc)
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Internal server error", "detail": str(exc) if settings.DEBUG else None},
-        )
 
     return app
 

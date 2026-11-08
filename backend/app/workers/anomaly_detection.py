@@ -37,7 +37,7 @@ except ImportError:
 from app.workers.celery_app import celery_app
 from app.workers.run_utils import run_async
 from app.core.database import AsyncSessionLocal
-from app.core.mongodb import get_mongo_db
+from app.core.mongodb import get_mongo_db, mongo_available
 from app.models.metrics import EntityMetric
 from app.models.entity import Entity
 
@@ -165,6 +165,14 @@ def _detect_for_entity(rows: List[EntityMetric]) -> Dict[str, Any]:
 
 async def _persist_alert(entity_name: str, entity_id: str, result: Dict[str, Any]):
     """Write a breakout alert to MongoDB for /dashboard/alerts to consume."""
+    # Mongo is optional infrastructure and permanently absent in dev: skip
+    # quietly (negative-cached, no 1.5s timeout per alert) instead of failing.
+    # Postgres alternative: the same signals are persisted to the
+    # `trend_signals` table by app/workers/notification_signals.py, which is
+    # what /notifications and /dashboard/alerts actually read.
+    if not await mongo_available():
+        logger.info("anomaly_detector: Mongo unavailable - alert persistence skipped", entity=entity_name)
+        return
     try:
         # get_mongo_db() is sync (returns AsyncIOMotorDatabase directly) —
         # awaiting it raised TypeError every call, silently swallowed by

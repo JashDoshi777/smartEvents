@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
-import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Download, FileSpreadsheet, Loader2, RefreshCw } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
@@ -11,21 +11,23 @@ import { EmptyState, ErrorState } from '@/components/ui/States';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
+import { Bold } from '@/components/ui/Bold';
 import { Ring, StackBar } from '@/components/dashboard/Ring';
 import { getKPIs, getBriefing, getPortfolio, downloadExecutiveReportPdf } from '@/lib/api';
 import { num, timeAgo } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { CountUp } from '@/components/dashboard/CountUp';
 import styles from './page.module.css';
 
-const scoreColor = (_v?: number | null) => 'var(--accent)';
+const scoreColor = () => 'var(--accent)';
 
 export default function ExecutivePage() {
-  const { isIndia } = useMarketScope();
+  const { scope, isIndia } = useMarketScope();
   const { user } = useAuth();
   const toast = useToast();
-  const kpis = useSWR('kpis', getKPIs, { refreshInterval: 60000 });
-  const briefing = useSWR('briefing', getBriefing, { revalidateOnFocus: false });
-  const portfolio = useSWR('portfolio', () => getPortfolio());
+  const kpis = useSWR(['kpis', scope], () => getKPIs(scope), { refreshInterval: 60000 });
+  const briefing = useSWR(['briefing', scope], () => getBriefing(scope), { revalidateOnFocus: false });
+  const portfolio = useSWR(['portfolio', scope], () => getPortfolio(undefined, scope));
   const [exporting, setExporting] = useState(false);
   // The backend only lets executives and analysts export reports.
   const canExport = user?.role === 'executive' || user?.role === 'analyst';
@@ -52,9 +54,17 @@ export default function ExecutivePage() {
     }
   }
 
+  function exportCsv() {
+    downloadCsv(`liveiq-portfolio-${scope}-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Rank', 'Name', 'Type', 'Category', 'Country', 'Market', 'Composite score', 'Google Trends', 'News mentions 7d', 'Health', 'Last updated'],
+      all.map(e => [e.rank, e.name, e.type, e.category, e.country, e.is_international ? 'International' : 'India', e.composite_score, e.google_trend_score, e.news_mentions_7d, e.health, e.last_updated]));
+    toast(`Exported ${num(all.length)} acts`, 'success');
+  }
+
   const k = kpis.data;
   const p = portfolio.data;
-  const rows = (p?.portfolio ?? []).filter(e => isIndia ? !e.is_international : true).slice(0, 10);
+  const all = p?.portfolio ?? [];
+  const rows = all.filter(e => e.composite_score != null).slice(0, 10);
   const top = Math.max(1, ...rows.map(r => r.composite_score ?? 0));
   const hs = p?.health_summary;
   const score = k?.entity_portfolio.avg_composite_score;
@@ -63,12 +73,14 @@ export default function ExecutivePage() {
     <Page
       title="Executive suite"
       subtitle="Portfolio intelligence for leadership"
-      actions={canExport ? (
+      actions={<>
+        <button className="btn btn-tinted" onClick={exportCsv} disabled={all.length === 0} aria-label="Export portfolio CSV"><FileSpreadsheet size={15} />CSV</button>
+        {canExport && (
         <button className="btn btn-primary" onClick={exportPdf} disabled={exporting} aria-label="Export PDF report">
           {exporting ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
           {exporting ? 'Generating…' : 'Export PDF'}
-        </button>
-      ) : undefined}
+        </button>)}
+      </>}
     >
       {kpis.error && !k ? <GlassCard><ErrorState message="Couldn’t load portfolio KPIs." onRetry={() => kpis.mutate()} /></GlassCard> : (
         <div className={styles.bento}>
@@ -76,7 +88,7 @@ export default function ExecutivePage() {
             <h2 className={styles.title}>Portfolio health</h2>
             {!k ? <Skeleton height={190} radius={22} /> : (<>
               <div style={{ display: 'flex', justifyContent: 'center', padding: '6px 0' }}>
-                <Ring value={score} size={170} stroke={16} color={scoreColor(score)}>
+                <Ring value={score} size={170} stroke={16} color={scoreColor()}>
                   <div><div className={'num-rounded'} style={{ fontSize: '3rem', fontWeight: 700, lineHeight: 1 }}>{score ?? '—'}</div><div className="t-caption text-tertiary">avg demand / 100</div></div>
                 </Ring>
               </div>
@@ -102,13 +114,13 @@ export default function ExecutivePage() {
             {briefing.isLoading && !briefing.data ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>{[100, 92, 86, 70, 90].map((w, i) => <Skeleton key={i} height={14} width={`${w}%`} />)}</div>
             ) : briefing.error && !briefing.data ? <ErrorState message="Briefing is unavailable right now." onRetry={() => briefing.mutate()} />
-              : <p className={`t-body text-secondary ${styles.briefing}`}>{briefing.data?.briefing || 'No briefing available yet.'}</p>}
+              : <p className={`t-body text-secondary ${styles.briefing}`}>{briefing.data?.briefing ? <Bold text={briefing.data.briefing} /> : 'No briefing available yet.'}</p>}
           </GlassCard>
 
           <GlassCard className={styles.stats} delay={0.08}>
             {!k ? <Skeleton height={70} radius={14} style={{ gridColumn: '1 / -1' }} /> : <>
-              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={isIndia ? k.entity_portfolio.indian : k.entity_portfolio.total_tracked} format={num as unknown as (n: number) => string} /></span><span className="t-footnote text-secondary">{isIndia ? 'Indian acts' : 'Acts tracked'} · {Math.round(k.entity_portfolio.metrics_coverage_pct)}% scored</span></div>
-              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={k.entity_portfolio.international} /></span><span className="t-footnote text-secondary">International acts to book</span></div>
+              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={k.entity_portfolio.total_tracked} format={num as unknown as (n: number) => string} /></span><span className="t-footnote text-secondary">{isIndia ? 'Indian acts' : 'International acts'} · {Math.round(k.entity_portfolio.metrics_coverage_pct)}% scored</span></div>
+              <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={hs?.strong ?? 0} /></span><span className="t-footnote text-secondary">Strong acts</span></div>
               <div className={styles.stat}><span className={`num-rounded ${styles.statVal}`}><CountUp value={k.city_coverage.active_on_district} /></span><span className="t-footnote text-secondary">Cities live · {num(k.city_coverage.expansion_opportunities)} to open</span></div>
             </>}
           </GlassCard>

@@ -32,3 +32,25 @@
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .more { width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 14px; min-height: 52px; border: 0; border-top: .5px solid var(--divider); background: transparent; color: var(--accent); font: inherit; font-size: .9375rem; cursor: pointer; }
 .more:active { background: var(--fill-quaternary); }
+
+.filters { display: flex; flex-direction: column; gap: 10px; padding: 0 20px 12px; }
+.searchWrap { position: relative; }
+.searchIcon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; }
+.search { width: 100%; padding-left: 36px; min-height: 44px; }
+.selRow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sel { min-height: 44px; min-width: 0; }
+.foot { display: flex; flex-direction: column; align-items: stretch; }
+.foot > span { padding: 8px 20px 10px; }
+.calWrap { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+.calHead { display: flex; align-items: center; gap: 8px; padding: 0 6px; }
+.dow, .calGrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.dow span { text-align: center; font-size: .6875rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-tertiary); padding: 4px 0; }
+.calDay { position: relative; min-height: 48px; border: 0; border-radius: 12px; background: transparent; color: var(--text-primary); font: inherit; font-size: .9375rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; transition: background .16s, transform .16s; }
+.calDay:hover { background: var(--fill-quaternary); }
+.calDay:active { transform: scale(.94); }
+.calOut { opacity: .3; }
+.calToday > span { background: var(--accent); color: #fff; border-radius: 50%; width: 28px; height: 28px; display: grid; place-items: center; font-weight: 700; }
+.calSel { background: var(--fill-tertiary); }
+.calCount { font-style: normal; font-size: .6875rem; font-weight: 700; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.calList { border-top: .5px solid var(--divider); margin: 6px -14px 0; }
+@media (max-width: 560px) { .filters { padding: 0 16px 10px; } .selRow { grid-template-columns: 1fr; } .calDay { min-height: 44px; } }

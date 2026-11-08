@@ -4,6 +4,8 @@
 .brief { grid-column: span 5; }
 .alerts { grid-column: span 7; }
 .trending { grid-column: span 5; }
+.movers { grid-column: span 12; }
+.moversGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 40px; }
 .cities, .cats, .events { grid-column: span 4; }
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .title { font-size: 1.0625rem; font-weight: 600; letter-spacing: -.02em; }
@@ -37,4 +39,4 @@
 .briefing { line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 9; -webkit-box-orient: vertical; overflow: hidden; }
 .foot { text-align: center; }
 @media (max-width: 1280px) { .hero, .brief, .alerts, .trending { grid-column: span 6; } .cities, .cats, .events { grid-column: span 6; } .events { grid-column: span 12; } }
-@media (max-width: 820px) { .bento > * { grid-column: span 12 !important; } .col { padding: 0 10px; } }
+@media (max-width: 820px) { .moversGrid { grid-template-columns: 1fr; } .bento > * { grid-column: span 12 !important; } .col { padding: 0 10px; } }

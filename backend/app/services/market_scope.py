@@ -5,6 +5,9 @@ India AND not flagged international). Foreign acts who merely tour India
 (Dua Lipa, BLACKPINK ...) belong to "global" even though their target
 market is India.
 """
+from typing import Annotated
+
+from fastapi import Query
 from sqlalchemy import and_, or_, true
 
 from app.models.entity import Entity
@@ -16,3 +19,7 @@ def market_clause(market: str):
     if market == "global":
         return or_(Entity.primary_market.is_distinct_from("India"), Entity.is_international.is_(True))
     return true()
+
+
+# Reusable query parameter: `market: Market = "all"` on any listing/aggregate route.
+Market = Annotated[str, Query(pattern="^(all|india|global)$", description="Scope entity data: india (domestic acts), global (international acts), or all")]

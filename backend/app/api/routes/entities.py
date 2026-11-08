@@ -16,14 +16,17 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, run_queries
+from app.core.sql import ilike_contains
 from app.models.entity import Entity, EntityType
 from app.models.metrics import EntityMetric
 from app.models.city import City
 from app.api.deps import get_current_user
+from app.services.latest_metric import latest_metric, trend_direction
+from app.services.market_scope import Market, market_clause
 from app.models.user import User
 
 router = APIRouter()
@@ -98,80 +101,92 @@ def _entity_to_profile(e: Entity) -> dict:
 
 @router.get("/search", summary="Search entities by name")
 async def search_entities(
-    q: str = Query(..., min_length=2, description="Search query (min 2 chars)"),
-    entity_type: Optional[str] = Query(None, description="Filter: artist, movie, comedian, sports_team..."),
-    category: Optional[str] = Query(None, description="Filter by category e.g. 'Bollywood', 'K-Pop'"),
+    q: str = Query(..., min_length=2, max_length=100, description="Search query (min 2 chars)"),
+    entity_type: Optional[str] = Query(None, max_length=50, description="Filter: artist, movie, comedian, sports_team..."),
+    category: Optional[str] = Query(None, max_length=100, description="Filter by category e.g. 'Bollywood', 'K-Pop'"),
     is_international: Optional[bool] = Query(None, description="Filter international artists"),
-    limit: int = Query(10, le=50),
+    market: Market = "all",
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0, le=10000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """
-    Search entities by name using PostgreSQL ILIKE (case-insensitive partial match).
-    Future: upgrade to pg_trgm GIN index for fuzzy search.
+    Case-insensitive partial match on name/description. `%`, `_` and `\\` in the
+    query are matched literally (escaped), not as SQL wildcards. Results are
+    ranked: verified, active-on-District, then name (stable tie-break on id so
+    pagination is deterministic). `total` = rows returned, `total_matches` =
+    all matches ignoring limit/offset.
     """
-    stmt = select(Entity).where(
-        or_(
-            Entity.name.ilike(f"%{q}%"),
-            Entity.description.ilike(f"%{q}%"),
-        )
+    q = q.strip()
+    if len(q) < 2:
+        raise HTTPException(422, "Search query must be at least 2 non-space characters")
+    stmt = select(Entity, func.count().over().label("total_matches")).where(
+        or_(ilike_contains(Entity.name, q), ilike_contains(Entity.description, q)),
+        market_clause(market),
     )
-
     if entity_type:
         stmt = stmt.where(Entity.entity_type == entity_type)
     if category:
-        stmt = stmt.where(Entity.category.ilike(f"%{category}%"))
+        stmt = stmt.where(ilike_contains(Entity.category, category))
     if is_international is not None:
         stmt = stmt.where(Entity.is_international == is_international)
 
     stmt = stmt.order_by(
-        Entity.is_verified.desc(),
-        Entity.is_active_on_district.desc(),
-        Entity.name.asc()
-    ).limit(limit)
+        Entity.is_verified.desc().nullslast(),
+        Entity.is_active_on_district.desc().nullslast(),
+        Entity.name.asc(),
+        Entity.id,
+    ).limit(limit).offset(offset)
 
-    result = await db.execute(stmt)
-    entities = result.scalars().all()
-
+    rows = (await db.execute(stmt)).all()
     return {
         "query": q,
-        "total": len(entities),
-        "results": [_entity_to_summary(e) for e in entities],
+        "total": len(rows),
+        "total_matches": rows[0][1] if rows else 0,
+        "offset": offset,
+        "results": [_entity_to_summary(r[0]) for r in rows],
     }
 
 
 @router.get("/category/{entity_type}", summary="Browse entities by type")
 async def browse_by_type(
     entity_type: str,
-    category: Optional[str] = Query(None),
+    category: Optional[str] = Query(None, max_length=100),
     is_international: Optional[bool] = Query(None),
-    limit: int = Query(20, le=100),
+    market: Market = "all",
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Browse all entities of a given type (artist, movie, comedian, etc.)"""
+    """Browse entities of a given type (artist, movie, comedian, ...), deterministic order."""
     valid_types = [e.value for e in EntityType]
     if entity_type not in valid_types:
         raise HTTPException(400, f"Invalid entity_type. Must be one of: {valid_types}")
 
-    stmt = select(Entity).where(Entity.entity_type == entity_type)
+    stmt = select(Entity, func.count().over().label("total_matches")).where(
+        Entity.entity_type == entity_type, market_clause(market)
+    )
     if category:
-        stmt = stmt.where(Entity.category.ilike(f"%{category}%"))
+        stmt = stmt.where(ilike_contains(Entity.category, category))
     if is_international is not None:
         stmt = stmt.where(Entity.is_international == is_international)
 
     stmt = stmt.order_by(
-        Entity.is_verified.desc(),
-        Entity.is_active_on_district.desc(),
-    ).limit(limit)
+        Entity.is_verified.desc().nullslast(),
+        Entity.is_active_on_district.desc().nullslast(),
+        Entity.name.asc(),
+        Entity.id,
+    ).limit(limit).offset(offset)
 
-    result = await db.execute(stmt)
-    entities = result.scalars().all()
-
+    rows = (await db.execute(stmt)).all()
     return {
         "entity_type": entity_type,
-        "total": len(entities),
-        "results": [_entity_to_summary(e) for e in entities],
+        "total": len(rows),
+        "total_matches": rows[0][1] if rows else 0,
+        "offset": offset,
+        "results": [_entity_to_summary(r[0]) for r in rows],
     }
 
 
@@ -211,29 +226,22 @@ async def get_entity_score(
     except ValueError:
         raise HTTPException(400, "Invalid entity ID format")
 
-    # Get entity
-    result = await db.execute(select(Entity).where(Entity.id == uid))
-    entity = result.scalar_one_or_none()
-    if not entity:
-        raise HTTPException(404, f"Entity '{entity_id}' not found")
-
-    # Get latest metric
-    metric_result = await db.execute(
-        select(EntityMetric)
-        .where(EntityMetric.entity_id == uid)
-        .order_by(EntityMetric.time.desc())
-        .limit(1)
+    lm = latest_metric()
+    entity_rows, metric_rows = await run_queries(
+        select(Entity).where(Entity.id == uid),
+        select(lm).where(lm.entity_id == uid),
     )
-    metric = metric_result.scalar_one_or_none()
+    if not entity_rows:
+        raise HTTPException(404, f"Entity '{entity_id}' not found")
+    entity = entity_rows[0][0]
+    metric = metric_rows[0][0] if metric_rows else None
 
     if metric:
         return {
             "entity_id": entity_id,
             "entity_name": entity.name,
-            "composite_score": round(metric.composite_score or 0, 1),
-            "trend_direction": "rising" if (metric.trend_velocity or 0) > 2 else (
-                "falling" if (metric.trend_velocity or 0) < -2 else "stable"
-            ),
+            "composite_score": round(metric.composite_score, 1) if metric.composite_score is not None else None,
+            "trend_direction": trend_direction(metric.trend_velocity),
             "signals": {
                 "lastfm_listeners": metric.lastfm_listeners,
                 "youtube_subscribers": metric.youtube_subscribers,
@@ -244,22 +252,21 @@ async def get_entity_score(
                 "sentiment_compound": metric.sentiment_compound,
                 "data_completeness": metric.data_completeness,
             },
+            "data_completeness": metric.data_completeness,
             "last_updated": metric.time.isoformat() if metric.time else None,
             "data_sources": entity.data_sources or [],
         }
-    else:
-        # No metrics collected yet — return entity info with pending status
-        return {
-            "entity_id": entity_id,
-            "entity_name": entity.name,
-            "composite_score": None,
-            "trend_direction": "pending",
-            "signals": {},
-            "last_updated": None,
-            "data_sources": entity.data_sources or [],
-            "message": "Metrics not yet collected. Workers will populate this data.",
-        }
-
+    return {
+        "entity_id": entity_id,
+        "entity_name": entity.name,
+        "composite_score": None,
+        "trend_direction": "pending",
+        "signals": {},
+        "data_completeness": None,
+        "last_updated": None,
+        "data_sources": entity.data_sources or [],
+        "message": "Metrics not yet collected. Workers will populate this data.",
+    }
 
 
 # Maps an entity/event category to the City column that best represents
@@ -293,13 +300,17 @@ async def get_entity_cities(
     except ValueError:
         raise HTTPException(400, "Invalid entity ID format")
 
-    result = await db.execute(select(Entity).where(Entity.id == uid))
-    entity = result.scalar_one_or_none()
-    if not entity:
+    # Only the columns used below: City rows carry wide JSON blobs and pulling
+    # whole rows over the WAN link cost ~1.4s for 53 cities.
+    entity_rows, cities = await run_queries(
+        select(Entity).where(Entity.id == uid),
+        select(City.name, City.state, City.tier, City.active_on_district, City.nightlife_score,
+               City.sports_affinity_score, City.arts_culture_score, City.comedy_market_size,
+               City.music_market_size),
+    )
+    if not entity_rows:
         raise HTTPException(404, f"Entity '{entity_id}' not found")
-
-    cities_result = await db.execute(select(City))
-    cities = cities_result.scalars().all()
+    entity = entity_rows[0][0]
 
     category_key = (entity.category or "").lower()
     field_name = next(
@@ -347,44 +358,38 @@ async def compare_entities(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Side-by-side entity comparison."""
-    if len(entity_ids) < 2 or len(entity_ids) > 4:
-        raise HTTPException(400, "Provide 2–4 entity IDs to compare")
+    """Side-by-side entity comparison (2 queries total, regardless of count)."""
+    # Preserve order, drop duplicates.
+    ids = list(dict.fromkeys(entity_ids))
+    if len(ids) < 2 or len(ids) > 4:
+        raise HTTPException(400, "Provide 2–4 distinct entity IDs to compare")
+    uids = []
+    for eid in ids:
+        try:
+            uids.append(UUID(eid))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(400, f"Invalid entity ID: {str(eid)[:50]}")
+
+    lm = latest_metric()
+    entity_rows, metric_rows = await run_queries(
+        select(Entity).where(Entity.id.in_(uids)),
+        select(lm).where(lm.entity_id.in_(uids)),
+    )
+    entities = {r[0].id: r[0] for r in entity_rows}
+    metrics = {r[0].entity_id: r[0] for r in metric_rows}
 
     profiles = []
-    for eid in entity_ids:
-        try:
-            uid = UUID(eid)
-        except ValueError:
-            raise HTTPException(400, f"Invalid entity ID: {eid}")
-        result = await db.execute(select(Entity).where(Entity.id == uid))
-        entity = result.scalar_one_or_none()
-        if not entity:
-            raise HTTPException(404, f"Entity '{eid}' not found")
-
-        # Get latest metric
-        metric_result = await db.execute(
-            select(EntityMetric)
-            .where(EntityMetric.entity_id == uid)
-            .order_by(EntityMetric.time.desc())
-            .limit(1)
-        )
-        metric = metric_result.scalar_one_or_none()
-
-        if metric:
-            trend_direction = "rising" if (metric.trend_velocity or 0) > 2 else (
-                "falling" if (metric.trend_velocity or 0) < -2 else "stable"
-            )
-            listeners = metric.lastfm_listeners or metric.spotify_monthly_listeners
-        else:
-            trend_direction = "pending"
-            listeners = None
-
+    for uid in uids:
+        entity = entities.get(uid)
+        if entity is None:
+            raise HTTPException(404, f"Entity '{uid}' not found")
+        metric = metrics.get(uid)
         profiles.append({
             **_entity_to_profile(entity),
-            "composite_score": round(metric.composite_score or 0, 1) if metric else None,
-            "trend_direction": trend_direction,
-            "listeners": listeners,
+            "composite_score": round(metric.composite_score, 1) if metric and metric.composite_score is not None else None,
+            "trend_direction": trend_direction(metric.trend_velocity) if metric else "pending",
+            "listeners": (metric.lastfm_listeners or metric.spotify_monthly_listeners) if metric else None,
+            "data_completeness": metric.data_completeness if metric else None,
         })
 
     return {"entities": profiles, "comparison_count": len(profiles)}

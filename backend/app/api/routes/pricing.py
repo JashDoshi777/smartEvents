@@ -25,6 +25,7 @@ from app.models.event import Event
 from app.models.venue import Venue
 from app.api.deps import get_current_user, require_roles
 from app.models.user import User, UserRole
+from app.services.city_lookup import resolve_city, escape_like
 
 # ML engine — loads/trains on first call
 try:
@@ -77,6 +78,16 @@ CITY_PRICE_MULTIPLIERS = {
 }
 
 
+TIER_PRICE_MULTIPLIERS = {1: 1.10, 2: 0.95, 3: 0.82}
+
+
+def _city_multiplier(city_key: str, tier: Optional[int]) -> float:
+    """Curated multiplier where we have one, else a tier-based default (not a flat 0.90)."""
+    if city_key in CITY_PRICE_MULTIPLIERS:
+        return CITY_PRICE_MULTIPLIERS[city_key]
+    return TIER_PRICE_MULTIPLIERS.get(tier or 0, 0.80 if tier else 0.90)
+
+
 @router.post("/optimize", summary="AI-powered ticket pricing recommendation")
 async def optimize_pricing(
     request: PricingRequest,
@@ -108,25 +119,24 @@ async def optimize_pricing(
     # Fetch latest metric
     metric_result = await db.execute(
         select(EntityMetric)
-        .where(EntityMetric.entity_id == uid)
+        .where(EntityMetric.entity_id == uid, EntityMetric.composite_score.isnot(None))   # newest SCORED row (social-only rows have no score)
         .order_by(desc(EntityMetric.time))
         .limit(1)
     )
     metric = metric_result.scalar_one_or_none()
 
     # Fetch city
-    city_result = await db.execute(
-        select(City).where(City.name.ilike(f"%{request.city}%"))
-    )
-    city_obj = city_result.scalar_one_or_none()
+    city_obj = await resolve_city(db, request.city)
+    # Canonical name for all downstream city filters (exact match, no LIKE wildcards).
+    city_name = city_obj.name if city_obj else request.city.strip()
 
     # ── Scoring inputs ─────────────────────────────────────────────────────────
     composite_score = (metric.composite_score or 30.0) if metric else 30.0  # default to median
     google_trend = (metric.google_trend_score or 50.0) if metric else 50.0
     news_signal = min((metric.news_mentions_7d or 0) / 20.0, 1.0) if metric else 0.0  # 0-1
 
-    city_key = request.city.lower()
-    city_multiplier = CITY_PRICE_MULTIPLIERS.get(city_key, 0.90)
+    city_key = city_name.lower()
+    city_multiplier = _city_multiplier(city_key, city_obj.tier if city_obj else None)
     city_income = (city_obj.avg_monthly_income or 45000) if city_obj else 45000
     income_multiplier = city_income / 50000  # normalized to ₹50k baseline
 
@@ -178,7 +188,7 @@ async def optimize_pricing(
     last_event_result = await db.execute(
         select(func.max(Event.event_date))
         .join(Venue, Event.venue_id == Venue.id)
-        .where(Venue.city.ilike(f"%{request.city}%"))
+        .where(Venue.city.ilike(escape_like(city_name), escape="\\"), Event.event_date <= datetime.now(timezone.utc))
     )
     last_event_date = last_event_result.scalar_one_or_none()
     if last_event_date is not None:
@@ -200,7 +210,7 @@ async def optimize_pricing(
             .select_from(Event)
             .join(Venue, Event.venue_id == Venue.id)
             .where(
-                Venue.city.ilike(f"%{request.city}%"),
+                Venue.city.ilike(escape_like(city_name), escape="\\"),
                 extract("month", Event.event_date) == request.event_date_month,
             )
         )
@@ -216,7 +226,7 @@ async def optimize_pricing(
             .select_from(Event)
             .join(Venue, Event.venue_id == Venue.id)
             .where(
-                Venue.city.ilike(f"%{request.city}%"),
+                Venue.city.ilike(escape_like(city_name), escape="\\"),
                 extract("month", Event.event_date) == request.event_date_month,
                 Event.predicthq_rank.isnot(None),
             )
@@ -239,6 +249,7 @@ async def optimize_pricing(
         )
         recommended      = ml_result["recommended_price"]
         fill_rate_pct    = ml_result["predicted_fill_rate"]
+        fill_at_recommended = ml_result.get("predicted_fill_rate_at_recommended")
         ml_confidence    = ml_result["confidence"]
         sensitivity_curve= ml_result.get("sensitivity_curve", [])
         model_name       = ml_result["model"]
@@ -257,6 +268,7 @@ async def optimize_pricing(
         recommended = round(recommended, -2)
         recommended = max(benchmarks["floor"], min(recommended, benchmarks["ultra_premium"]))
         fill_rate_pct  = round(min(95, composite_score * 0.9), 1)
+        fill_at_recommended = None
         ml_confidence  = 50
         sensitivity_curve = []
         model_name = "rule_based"
@@ -290,7 +302,7 @@ async def optimize_pricing(
     if entity.is_international:
         factors.append("International act commands premium pricing (+30%)")
     if city_multiplier > 1.0:
-        factors.append(f"{request.city} is a premium market (+{int((city_multiplier-1)*100)}%)")
+        factors.append(f"{city_name} is a premium market (+{int((city_multiplier-1)*100)}%)")
     if season_factor > 1.0:
         factors.append("Peak season month — higher demand expected")
     elif season_factor < 1.0:
@@ -315,6 +327,7 @@ async def optimize_pricing(
             "confidence":          confidence,
             "reasoning":           reasoning,
             "predicted_fill_rate": fill_rate_pct,
+            "predicted_fill_rate_at_recommended": fill_at_recommended,
             "sensitivity_curve":   sensitivity_curve,
         },
         "signals": {
@@ -356,7 +369,7 @@ async def get_price_elasticity(
         raise HTTPException(404, f"Entity '{entity_id}' not found")
 
     metric_result = await db.execute(
-        select(EntityMetric).where(EntityMetric.entity_id == uid)
+        select(EntityMetric).where(EntityMetric.entity_id == uid, EntityMetric.composite_score.isnot(None))
         .order_by(desc(EntityMetric.time)).limit(1)
     )
     metric = metric_result.scalar_one_or_none()
@@ -368,7 +381,7 @@ async def get_price_elasticity(
     curve = []
     for c in cities:
         city_key = c.name.lower()
-        city_mult = CITY_PRICE_MULTIPLIERS.get(city_key, 0.90)
+        city_mult = _city_multiplier(city_key, c.tier)
         income_mult = (c.avg_monthly_income or 45000) / 50000
         demand_mult = 1.0 + (composite / 100 - 0.5) * 0.8
         intl_factor = 1.30 if entity.is_international else 1.0

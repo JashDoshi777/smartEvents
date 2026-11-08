@@ -10,14 +10,29 @@ import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/States';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
+import { ArrowDownRight, ArrowUpRight } from 'lucide-react';
+import { Bold } from '@/components/ui/Bold';
 import { Ring } from '@/components/dashboard/Ring';
 import { CountUp } from '@/components/dashboard/CountUp';
-import { getDashboardSummaryScoped, getDashboardAlerts, getBriefing } from '@/lib/api';
+import { getDashboardSummaryScoped, getDashboardAlerts, getDashboardMovers, getBriefing, ScoreMover } from '@/lib/api';
 import { inrCompact, num, greeting, dateIN, timeAgo } from '@/lib/format';
 import styles from './page.module.css';
 
 const TIP = { background: 'var(--glass-fill-strong)', border: 'none', borderRadius: 12, fontSize: 13, color: 'var(--text-primary)' };
 const ALERT_LABEL = { breakout: 'Breakout', buzz: 'In the news', opportunity: 'Market gap', info: 'Info' } as const;
+
+function MoverRow({ m, up }: { m: ScoreMover; up: boolean }) {
+  return (
+    <Link href={`/intelligence?entity=${m.id}`} className={styles.row} style={{ textDecoration: 'none', color: 'inherit' }}>
+      <div className={styles.avatar}>{up ? <ArrowUpRight size={16} color="var(--positive)" aria-hidden /> : <ArrowDownRight size={16} color="var(--negative)" aria-hidden />}</div>
+      <div className={styles.info}>
+        <span className={`t-body ${styles.ellip}`} style={{ fontWeight: 500 }}>{m.name}</span>
+        <span className={`t-footnote text-secondary ${styles.ellip}`}>{m.previous_score.toFixed(1)} to {m.score.toFixed(1)} · {m.category ?? m.type}</span>
+      </div>
+      <span className={`num-rounded ${styles.val}`} style={{ color: up ? 'var(--positive)' : 'var(--negative)' }}>{m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}</span>
+    </Link>
+  );
+}
 
 function Head({ title, href, cta }: { title: string; href?: string; cta?: string }) {
   return (
@@ -31,8 +46,9 @@ function Head({ title, href, cta }: { title: string; href?: string; cta?: string
 export default function DashboardPage() {
   const { scope, isIndia } = useMarketScope();
   const sum = useSWR(['dashboard/summary', scope], () => getDashboardSummaryScoped(scope), { refreshInterval: 90000 });
-  const al = useSWR('dashboard/alerts', getDashboardAlerts, { refreshInterval: 120000 });
-  const br = useSWR('executive/briefing', getBriefing, { revalidateOnFocus: false });
+  const al = useSWR(['dashboard/alerts', scope], () => getDashboardAlerts(scope), { refreshInterval: 120000 });
+  const mv = useSWR(['dashboard/movers', scope], () => getDashboardMovers(scope, 4), { refreshInterval: 180000 });
+  const br = useSWR(['executive/briefing', scope], () => getBriefing(scope), { revalidateOnFocus: false });
   const [allAlerts, setAllAlerts] = useState(false);
 
   const s = sum.data;
@@ -74,7 +90,7 @@ export default function DashboardPage() {
           <Head title="AI briefing" href="/executive" cta="Executive suite" />
           {br.isLoading && !br.data ? <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>{[95, 85, 100, 70, 88, 60].map((w, i) => <Skeleton key={i} height={12} width={`${w}%`} />)}</div>
             : br.data ? (<>
-              <p className={`t-body text-secondary ${styles.briefing}`}>{br.data.briefing}</p>
+              <p className={`t-body text-secondary ${styles.briefing}`}><Bold text={br.data.briefing} /></p>
               <p className="t-footnote text-tertiary" style={{ marginTop: 'auto' }}>Updated {timeAgo(br.data.generated_at)} · <Link href="/copilot" className={styles.link} style={{ fontSize: 'inherit' }}>Ask Copilot</Link></p>
             </>) : <ErrorState message="Briefing unavailable right now." onRetry={() => br.mutate()} />}
         </GlassCard>
@@ -117,6 +133,20 @@ export default function DashboardPage() {
           )}
         </GlassCard>
 
+        <GlassCard className={`${styles.tile} ${styles.movers}`} delay={0.09}>
+          <Head title="What changed" href="/trends" cta="Trend Radar" />
+          {mv.isLoading && !mv.data ? <SkeletonRows rows={3} /> : mv.error && !mv.data ? <ErrorState message="Couldn’t load score movement." onRetry={() => mv.mutate()} /> :
+            (mv.data?.risers.length ?? 0) + (mv.data?.fallers.length ?? 0) === 0 ? <EmptyState title="No score movement yet" message="Movers appear once an act has two metric snapshots with different scores." /> : (
+            <>
+              <p className="t-footnote text-tertiary">Composite score, latest snapshot vs the one before · {num(mv.data?.compared)} acts compared{mv.data?.risers[0]?.as_of ? ` · as of ${dateIN(mv.data.risers[0].as_of)}` : ''}</p>
+              <div className={styles.moversGrid}>
+                <div className={styles.list} aria-label="Biggest risers">{mv.data!.risers.map(m => <MoverRow key={m.id} m={m} up />)}</div>
+                <div className={styles.list} aria-label="Biggest fallers">{mv.data!.fallers.map(m => <MoverRow key={m.id} m={m} up={false} />)}</div>
+              </div>
+            </>
+          )}
+        </GlassCard>
+
         <GlassCard className={`${styles.tile} ${styles.cities}`} delay={0.1}>
           <Head title="City heat" href="/markets" cta="Markets" />
           {loading ? <SkeletonRows rows={6} /> : (s?.city_heat.length ?? 0) === 0 ? <EmptyState title="No city data" /> : (
@@ -156,7 +186,7 @@ export default function DashboardPage() {
         </GlassCard>
 
         <GlassCard className={`${styles.tile} ${styles.events}`} delay={0.14}>
-          <Head title="Upcoming events" href="/events" cta="Monitor" />
+          <Head title={(s?.upcoming_events ?? []).some(e => e.event_date && new Date(e.event_date).getTime() >= new Date(s!.generated_at).getTime()) ? 'Upcoming events' : 'Recent events'} href="/events" cta="Monitor" />
           {loading ? <SkeletonRows rows={4} /> : (s?.upcoming_events.length ?? 0) === 0 ? <EmptyState title="No events synced yet" message="Events from ticketing platforms show up here." /> : (
             <div className={styles.list}>
               {s!.upcoming_events.slice(0, 5).map((e, i) => (

@@ -70,18 +70,21 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--names", help="comma-separated names only")
+    ap.add_argument("--new-only", action="store_true", help="only rows created by expand_entities_wikidata.py and not yet enriched")
     ap.add_argument("--skip-matched", action="store_true", help="skip entities already having wikidata_qid")
     a = ap.parse_args()
 
     eng = create_engine(settings.POSTGRES_SYNC_URL)
     with eng.connect() as c:
         rows = c.execute(text("""select id,name,entity_type,category,is_international,primary_market,external_ids,
-              description,home_city,home_state,country,language,genre,genres,image_url,name_aliases
+              description,home_city,home_state,country,language,genre,genres,image_url,name_aliases,data_provenance
               from entities where status='active' order by name""")).mappings().all()
     rows = [dict(r) for r in rows]
     if a.names:
         s = {n.strip().lower() for n in a.names.split(",")}
         rows = [r for r in rows if r["name"].lower() in s]
+    if a.new_only:
+        rows = [r for r in rows if (r["data_provenance"] or {}).get("source") == "wikidata-sparql"]
     if a.skip_matched:
         rows = [r for r in rows if not (r["external_ids"] or {}).get("wikidata_qid")]
     if a.limit:
@@ -97,6 +100,12 @@ def main():
             print("searched", i)
     allq = sorted({q for v in cands.values() for q in v})
     ents = _wd.get_entities(allq)
+    miss = [q for q in allq if q not in ents]
+    for _ in range(3):
+        if not miss:
+            break
+        ents.update(_wd.get_entities(miss)); miss = [q for q in allq if q not in ents]
+    print("candidate QIDs", len(allq), "unfetched", len(miss))
     sl = _wd.cached("sl_" + str(hash(tuple(allq)) % 10**9), lambda: _wd.sitelink_counts(allq))
 
     # labels for type-defining claims
@@ -124,11 +133,21 @@ def main():
             if not e:
                 continue
             names = {_wd.norm(e["label"] or "")} | {_wd.norm(x) for x in e["aliases"]}
-            if nn not in names:
+            names |= {n.replace(" ", "") for n in names}
+            if nn not in names and nn.replace(" ", "") not in names:
                 continue
             tl = L(e["claims"].get("P31", [])) + L(e["claims"].get("P106", [])) + [e.get("desc") or ""]
+            if any("fictional" in (t or "").lower() for t in tl):
+                continue
             if not type_ok(etype, tl):
                 continue
+            # hard identity check: our Last.fm MBID must equal Wikidata's MusicBrainz ID when both exist
+            mb = (r["external_ids"] or {}).get("lastfm_mbid")
+            wmb = e["claims"].get("P434", [])
+            if mb and wmb and mb not in wmb:
+                continue
+            if mb and not wmb and e["claims"].get("P570"):
+                continue  # deceased candidate that cannot be tied to our MBID (e.g. Steve Lacy jazz vs singer)
             domestic = not r["is_international"] and (r["primary_market"] == "India")
             if domestic and etype != "sports_team" and not india_link(e):
                 # place of origin/birth in India counts as well
@@ -143,7 +162,8 @@ def main():
         if len(pool) > 1 and sl.get(pool[0][0], 0) < 3 * max(sl.get(pool[1][0], 0), 1):
             report["ambiguous"].append((r["name"], [(q, e["desc"]) for q, e in pool[:3]])); continue
         q, e = pool[0]
-        conf = 0.95 if len(pool) == 1 else 0.85
+        mb = (r["external_ids"] or {}).get("lastfm_mbid")
+        conf = 0.99 if (mb and mb in e["claims"].get("P434", [])) else 0.95 if len(pool) == 1 else 0.85
         report["matched"].append((r["name"], q, e["label"], e["desc"]))
         updates.append((r, q, e, conf))
 
@@ -159,25 +179,53 @@ def main():
     chain = _wd.get_entities(sorted(chain_need))
     lab2 = _wd.labels(sorted({x for p in list(places.values()) + list(chain.values()) for pid in ("P131", "P17") for x in p["claims"].get(pid, []) if isinstance(x, str)}))
 
+    CITYISH = ("city", "town", "village", "municipality", "metropolis", "commune", "borough", "locality",
+               "census town", "urban", "capital", "district of", "municipal")
+
+    def is_cityish(ent):
+        p31 = " ".join((_wd.labels(ent["claims"].get("P31", [])) or {}).get(x) or "" for x in ent["claims"].get("P31", [])).lower() if False else \
+            " ".join(((lab.get(x) or lab2.get(x) or (_wd.labels([x]).get(x))) or "").lower() for x in ent["claims"].get("P31", []))
+        return any(k in p31 for k in CITYISH)
+
     def place_info(pq):
-        p = places.get(pq)
-        if not p:
+        """Walk up P131 from the birth/origin place until a city-like item (never a hospital/hamlet)."""
+        cur = _wd.get_entities([pq]).get(pq)
+        city_ent = None
+        for _ in range(4):
+            if not cur:
+                break
+            if is_cityish(cur):
+                city_ent = cur; break
+            nxt = [x for x in cur["claims"].get("P131", []) if isinstance(x, str)]
+            cur = _wd.get_entities(nxt[:1]).get(nxt[0]) if nxt else None
+        if not city_ent:
             return None, None, None
-        city = p["label"]
-        state = None
-        country = lab2.get((p["claims"].get("P17") or [None])[0]) or lab.get((p["claims"].get("P17") or [None])[0])
-        frontier = [x for x in p["claims"].get("P131", []) if isinstance(x, str)]
-        for _ in range(3):
+        city = city_ent["label"]
+        if city == "Mumbai Suburban district":
+            city = "Mumbai"
+        if any(w in city.lower() for w in ("district", "county")) or "country" in " ".join(
+                (_wd.labels(city_ent["claims"].get("P31", [])) or {}).values() if False else []):
+            return None, None, None  # district/county-level items are not a home *city*
+        country = None
+        cid = (city_ent["claims"].get("P17") or [None])[0]
+        if cid:
+            country = _wd.labels([cid]).get(cid)
+        state = city["label"] if False else None
+        frontier = [x for x in city_ent["claims"].get("P131", []) if isinstance(x, str)]
+        if city in INDIAN_STATES:
+            state = city
+        for _ in range(4):
+            if state or not frontier:
+                break
+            ents_ = _wd.get_entities(frontier)
             nxt = []
             for f in frontier:
-                lbl = lab2.get(f) or lab.get(f) or (chain.get(f) or {}).get("label")
-                if lbl in INDIAN_STATES:
-                    state = lbl; break
-                nxt += [x for x in (chain.get(f) or {}).get("claims", {}).get("P131", []) if isinstance(x, str)]
-            if state or not nxt:
-                break
-            more = _wd.get_entities(nxt)
-            chain.update(more)
+                x = ents_.get(f)
+                if not x:
+                    continue
+                if x["label"] in INDIAN_STATES:
+                    state = x["label"]; break
+                nxt += [y for y in x["claims"].get("P131", []) if isinstance(y, str)]
             frontier = nxt
         return CITY_ALIAS.get(city, city), state, country
 
@@ -230,8 +278,11 @@ def main():
             sets["genres"] = gen; fields.append("genres")
         # is_international: correct only on clear citizenship/origin evidence
         cids = cl.get("P27") or cl.get("P495") or []
-        if cids and r["entity_type"] in ("artist", "comedian", "movie"):
-            intl = IN not in cids
+        # Only ever correct True -> False when Wikidata says Indian citizen/origin. We never flip
+        # False -> True: Bollywood acts of Pakistani/Nepali citizenship (Atif Aslam, Udit Narayan)
+        # are domestic-market acts for this product.
+        if IN in cids and r["is_international"] and r["entity_type"] in ("artist", "comedian", "movie"):
+            intl = False
             if intl != bool(r["is_international"]):
                 sets["is_international"] = intl; fields.append(f"is_international:{r['is_international']}->{intl}")
                 stats["intl_fixed"] += 1

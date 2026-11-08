@@ -1,7 +1,10 @@
 'use client';
 
+/* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
+
 import { useEffect, useState } from 'react';
 import useSWR from 'swr';
+import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Star, Search, Plus, Check, X, Loader2 } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
@@ -98,6 +101,14 @@ export default function WatchlistPage() {
                         <span className={`t-callout ${styles.ellip}`} style={{ fontWeight: 600 }}>{e.name}</span>
                         <span className="t-footnote text-tertiary">{e.category ?? 'Music'}{e.is_international ? ' · Global' : ' · India'}{e.watched_since ? ` · since ${dateIN(e.watched_since, { day: 'numeric', month: 'short' })}` : ''}</span>
                       </div>
+                      {e.composite_score != null && (
+                        <Link href={`/intelligence?entity=${e.id}`} style={{ textAlign: 'right', textDecoration: 'none', color: 'inherit', flexShrink: 0 }} aria-label={`${e.name} score ${e.composite_score}`}>
+                          <div className="num-rounded t-headline">{e.composite_score.toFixed(1)}</div>
+                          {e.score_delta != null && e.score_delta !== 0
+                            ? <div className="t-caption num-rounded" style={{ color: e.score_delta > 0 ? 'var(--positive)' : 'var(--negative)' }}>{e.score_delta > 0 ? '+' : ''}{e.score_delta.toFixed(1)} since added</div>
+                            : <div className="t-caption text-tertiary">no change</div>}
+                        </Link>
+                      )}
                       <button className={styles.rm} onClick={() => remove(e.id, e.name)} disabled={busy === e.id} aria-label={`Remove ${e.name} from watchlist`}><X size={17} /></button>
                     </div>
                   </motion.div>

@@ -1,17 +1,21 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { AnimatePresence, motion } from 'framer-motion';
-import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Info, MapPin } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Download, Info, MapPin, Search } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Sheet } from '@/components/ui/Sheet';
 import { EmptyState, ErrorState } from '@/components/ui/States';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { dateIN, num } from '@/lib/format';
+import { buildIcs } from '@/lib/ics';
 import { Ring, ROUNDED } from '@/components/insights/Ring';
-import { VenueCalendarEvent, getCityVenuesStrict, getMarketCities, getVenueCalendarStrict } from '@/lib/api';
+import { Segmented } from '@/components/ui/Controls';
+import { SkeletonRows } from '@/components/ui/Skeleton';
+import { VenueCalendarEvent, getCityVenuesStrict, getMarketCities, getVenueAvailability, getVenueCalendarStrict } from '@/lib/api';
 import styles from './page.module.css';
 
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -23,23 +27,40 @@ const MONTH_FMT = new Intl.DateTimeFormat('en-IN', { month: 'long' });
 
 function todayKey() { return new Date().toLocaleDateString('en-CA', { timeZone: IST }); }
 
-export default function VenueCalendarPage() {
-  const [city, setCity] = useState('Mumbai');
-  const [venueId, setVenueId] = useState('');
+function VenueCalendarInner() {
+  const params = useSearchParams();   // deep link: ?city=Pune&venue=<id>
+  const [city, setCity] = useState(() => params.get('city') ?? 'Mumbai');
+  const [venuePick, setVenuePick] = useState(() => params.get('venue') ?? '');
   const today = todayKey();
   const [ty, tm] = today.split('-').map(Number);
   const [view, setView] = useState({ y: ty, m: tm - 1 });
   const [selected, setSelected] = useState<string | null>(null);
+  const [vq, setVq] = useState('');
+  const [minCap, setMinCap] = useState('1000');
+  const [horizon, setHorizon] = useState('3');
 
   const { data: citiesData } = useSWR('market-cities', getMarketCities);
   const venuesRes = useSWR(['cal-venues', city], () => getCityVenuesStrict(city));
   const venues = useMemo(() => (venuesRes.data?.venues ?? []).filter((v): v is typeof v & { id: string } => !!v.id), [venuesRes.data]);
 
   // Auto-pick the first venue when the city (or its venue list) changes.
+  // The chosen venue if it belongs to this city's list, else the city's first venue.
+  const venueId = venues.some(v => v.id === venuePick) ? venuePick : (venues[0]?.id ?? '');
+  const setVenueId = setVenuePick;
   useEffect(() => {
-    if (venues.length === 0) { setVenueId(''); return; }
-    if (!venues.some(v => v.id === venueId)) setVenueId(venues[0].id);
-  }, [venues, venueId]);
+    const p = new URLSearchParams({ city });
+    if (venueId) p.set('venue', venueId);
+    window.history.replaceState(null, '', `?${p}`);
+  }, [city, venueId]);
+  const shownVenues = useMemo(() => {
+    const n = vq.trim().toLowerCase();
+    const list = n ? venues.filter(v => v.name.toLowerCase().includes(n)) : venues;
+    const sel = venues.find(v => v.id === venueId);
+    return sel && !list.includes(sel) ? [sel, ...list] : list;
+  }, [venues, vq, venueId]);
+
+  const capN = Math.min(200000, Number(minCap) || 0);   // API caps min_capacity at 2,00,000
+  const finder = useSWR(['cal-finder', city, capN, horizon], () => getVenueAvailability(city, capN, Number(horizon)), { keepPreviousData: true });
 
   const cal = useSWR(venueId ? ['venue-cal', venueId] : null, () => getVenueCalendarStrict(venueId, 12));
 
@@ -72,6 +93,16 @@ export default function VenueCalendarPage() {
     });
   }, [view]);
 
+  const allEvents = useMemo(() => (cal.data?.weeks ?? []).flatMap(w => w.events_this_week), [cal.data]);
+  const exportIcs = () => {
+    if (!cal.data) return;
+    const blob = new Blob([buildIcs(cal.data.venue.name, cal.data.venue.city, allEvents)], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${cal.data.venue.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
   const range = cal.data?.range;
   const step = (n: number) => setView(v => { const d = new Date(Date.UTC(v.y, v.m + n, 1)); return { y: d.getUTCFullYear(), m: d.getUTCMonth() }; });
   const goToday = () => { setView({ y: ty, m: tm - 1 }); setSelected(today); };
@@ -92,11 +123,17 @@ export default function VenueCalendarPage() {
           </div>
         </div>
         <div className={styles.field}>
-          <label className={styles.label} htmlFor="cal-venue">Venue</label>
+          <label className={styles.label} htmlFor="cal-venue">Venue{venues.length > 10 ? ` (${venues.length})` : ''}</label>
+          {venues.length > 10 && (
+            <div className={styles.selectWrap}>
+              <Search size={14} className={styles.selectIcon} style={{ left: 12, right: 'auto' }} />
+              <input className={`input ${styles.select}`} style={{ paddingLeft: 34 }} placeholder="Search venues" aria-label="Search venues" value={vq} onChange={e => setVq(e.target.value)} />
+            </div>
+          )}
           <div className={styles.selectWrap}>
             <select id="cal-venue" className={`input ${styles.select}`} value={venueId} disabled={venues.length === 0} onChange={e => { setVenueId(e.target.value); setSelected(null); }}>
               {venues.length === 0 && <option value="">{venuesRes.isLoading ? 'Loading venues…' : 'No venues on file'}</option>}
-              {venues.map(v => <option key={v.id} value={v.id}>{v.name} · {num(v.capacity)} cap</option>)}
+              {shownVenues.map(v => <option key={v.id} value={v.id}>{v.name} · {num(v.capacity)} cap</option>)}
             </select>
             <ChevronDown size={14} className={styles.selectIcon} />
           </div>
@@ -112,6 +149,7 @@ export default function VenueCalendarPage() {
           <GlassCard className={styles.calCard}>
             <div className={styles.calHead}>
               <h2 className={styles.monthTitle} data-testid="month-title">{MONTH_FMT.format(new Date(Date.UTC(view.y, view.m, 1)))} <span>{view.y}</span></h2>
+              <button className="btn btn-tinted btn-sm" onClick={exportIcs} disabled={!cal.data || allEvents.length === 0} aria-label="Export calendar (.ics)" title="Export tracked events as .ics"><Download size={14} strokeWidth={1.75} /> .ics</button>
               <button className="btn btn-tinted btn-sm" onClick={goToday}>Today</button>
               <button className="btn btn-icon" aria-label="Previous month" onClick={() => step(-1)}><ChevronLeft size={16} strokeWidth={1.75} /></button>
               <button className="btn btn-icon" aria-label="Next month" onClick={() => step(1)}><ChevronRight size={16} strokeWidth={1.75} /></button>
@@ -177,6 +215,28 @@ export default function VenueCalendarPage() {
         </div>
       )}
 
+      <div data-testid="finder"><GlassCard className={styles.card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div><h2 className={styles.headline}>Find free weekends</h2><p className={styles.sub}>Venues in {city} with no tracked event on a Friday to Sunday (IST).</p></div>
+          <Segmented ariaLabel="Horizon" value={horizon} onChange={setHorizon} options={[{ value: '3', label: '3 months' }, { value: '6', label: '6 months' }, { value: '12', label: '12 months' }]} />
+        </div>
+        <div className={styles.field} style={{ maxWidth: 240 }}>
+          <label className={styles.label} htmlFor="cal-mincap">Minimum capacity</label>
+          <input id="cal-mincap" className="input tnum" inputMode="numeric" value={minCap} onChange={e => setMinCap(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="Any" />
+        </div>
+        {finder.error && !finder.data ? <ErrorState message="Couldn’t search availability." onRetry={() => finder.mutate()} />
+          : !finder.data ? <SkeletonRows rows={3} />
+          : finder.data.venues.length === 0 ? <EmptyState icon={<MapPin size={30} strokeWidth={1.5} />} title="No venue matches" message={`No venue in ${city} has capacity of ${num(capN)} or more. Lower the minimum.`} />
+          : <div data-testid="finder-list">{finder.data.venues.map(v => (
+            <button key={v.id} type="button" className={`${styles.evRow} ${styles.evBtn}`} onClick={() => { setVenueId(v.id); setSelected(null); const [y, m] = (v.open_weekends[0] ?? today).split('-').map(Number); setView({ y, m: m - 1 }); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p className="t-callout" style={{ fontWeight: 600 }}>{v.name}</p>
+                <p className="t-caption text-tertiary">{num(v.capacity)} capacity · {v.open_count} of {v.total_weekends} weekends open{v.open_weekends.length ? ` · first open ${dateIN(v.open_weekends[0], { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}` : ''}</p>
+              </div>
+              <ChevronRight size={16} color="var(--text-tertiary)" />
+            </button>))}</div>}
+      </GlassCard></div>
+
       <Sheet open={!!selected} onClose={() => setSelected(null)} title={selected ? dateIN(selected, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : ''}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }} data-testid="day-sheet">
           {selEvents.length === 0 ? (
@@ -191,4 +251,8 @@ export default function VenueCalendarPage() {
       </Sheet>
     </Page>
   );
+}
+
+export default function VenueCalendarPage() {
+  return <Suspense fallback={null}><VenueCalendarInner /></Suspense>;
 }

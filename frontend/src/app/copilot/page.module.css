@@ -58,3 +58,18 @@
 .newChat { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; color: var(--accent); font: inherit; font-size: .9375rem; cursor: pointer; padding: 8px 4px; min-height: 44px; }
 .newChat:disabled { color: var(--text-disabled); cursor: default; }
 .newChat:active:not(:disabled) { opacity: .6; }
+
+.sources { display: flex; gap: 6px; align-items: flex-start; margin-top: 10px; font-size: .75rem; color: var(--text-tertiary); line-height: 1.4; }
+.sources svg { flex-shrink: 0; margin-top: 2px; }
+.actions { display: flex; gap: 4px; margin-top: 8px; margin-left: -8px; }
+.act { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); font: inherit; font-size: .8125rem; cursor: pointer; }
+.act:hover { background: var(--fill-quaternary); }
+.histRow { display: flex; align-items: center; gap: 6px; border-bottom: .5px solid var(--divider); }
+.histBtn { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 12px 4px; min-height: 52px; cursor: pointer; }
+.histTitle { font-size: .9375rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.histSub { font-size: .75rem; color: var(--text-tertiary); }
+
+.tableWrap { overflow-x: auto; margin: 8px 0; max-width: 100%; }
+.md table { border-collapse: collapse; font-size: .8125rem; min-width: 100%; }
+.md th, .md td { text-align: left; padding: 7px 10px; border-bottom: .5px solid var(--divider); vertical-align: top; }
+.md th { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }

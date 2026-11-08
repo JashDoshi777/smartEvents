@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Tick } from '@/components/intel/Tick';
 import { initials, typeLabel, useScopedPortfolio } from '@/components/intel/entity-utils';
-import { getTrendBreakouts, getTrendViral, BreakoutPrediction } from '@/lib/api';
+import { getTrendBreakouts, getTrendViral, getDashboardMovers, BreakoutPrediction } from '@/lib/api';
 import { compact, num, timeAgo } from '@/lib/format';
 import k from '@/components/intel/Kit.module.css';
 import styles from './page.module.css';
@@ -35,6 +35,7 @@ export default function TrendsPage() {
 
   const br = useSWR(['trends/breakout', scope], () => getTrendBreakouts(scope, 50));
   const vi = useSWR(['trends/viral', scope], () => getTrendViral(scope, 8));
+  const mv = useSWR(['trends/movers', scope], () => getDashboardMovers(scope, 5));
   const { scoped, isLoading: pLoading } = useScopedPortfolio();
 
   const preds = useMemo(() => br.data?.predictions ?? [], [br.data]);
@@ -126,6 +127,21 @@ export default function TrendsPage() {
           </div>
 
           <div className={styles.side}>
+            <div>
+              <div className={styles.sectionRow}><span>Biggest movers</span><span>Vs previous snapshot</span></div>
+              <GlassCard className={k.group} delay={0.12}>
+                {mv.isLoading && !mv.data ? <div style={{ padding: 16 }}><Skeleton height={150} radius={12} /></div>
+                  : mv.error && !mv.data ? <ErrorState message="Couldn’t load movers." onRetry={() => mv.mutate()} />
+                  : (mv.data?.risers.length ?? 0) + (mv.data?.fallers.length ?? 0) === 0 ? <p className="t-footnote text-tertiary" style={{ padding: 20 }}>No score changes between the last two snapshots.</p>
+                  : [...(mv.data?.risers ?? []).slice(0, 3), ...(mv.data?.fallers ?? []).slice(0, 3)].map(m => (
+                    <Link key={m.id} className={k.row} href={`/intelligence?entity=${m.id}`} style={{ ['--inset' as string]: '20px', minHeight: 48 }}>
+                      <span className={k.main}><span className={k.name}>{m.name}</span><span className={k.sub}>{m.previous_score.toFixed(1)} to {m.score.toFixed(1)}</span></span>
+                      <span className={`${k.trail} num-rounded`} style={{ color: m.delta > 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 600 }}>{m.delta > 0 ? '+' : ''}{m.delta.toFixed(1)}</span>
+                      <ChevronRight size={16} strokeWidth={1.7} className={k.chev} />
+                    </Link>
+                  ))}
+              </GlassCard>
+            </div>
             <div>
               <div className={styles.sectionRow}><span>Buzz this week</span><span>News mentions</span></div>
               <GlassCard className={k.group} delay={0.14}>

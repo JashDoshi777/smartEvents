@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { ArrowDownRight, ArrowUpRight, ChevronRight, Lock, Search, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Bookmark, ChevronRight, Link2, Lock, Search, Sparkles, Trash2, TriangleAlert } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Sheet } from '@/components/ui/Sheet';
@@ -16,6 +17,8 @@ import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { Ring, ROUNDED } from '@/components/insights/Ring';
 import { CountUp } from '@/components/insights/CountUp';
 import { inr, inrCompact, num } from '@/lib/format';
+import { Segmented } from '@/components/ui/Controls';
+import { useLocalList } from '@/lib/useLocalList';
 import {
   ApiError, EntitySearchResult, PricingResult, getElasticityCurve, getMarketCities, getPortfolio,
   getPriceBenchmarkTable, optimizePriceStrict, searchEntities,
@@ -32,6 +35,7 @@ const toSlider = (v: number, lo: number, hi: number) => Math.round((Math.log(Mat
 const fromSlider = (t: number, lo: number, hi: number, step: number) => Math.round((lo * Math.pow(hi / lo, t / 1000)) / step) * step;
 const guessCategory = (cat: string | null | undefined, keys: string[]) => keys.find(k => (cat ?? '').toLowerCase().includes(k)) ?? 'music';
 
+type Scenario = { id: string; act: string; city: string; capacity: number; price: number; recommended: number; fill: number | null; fillAtRec: number | null; revenueYours: number | null; revenueRec: number | null; tier: string; savedAt: number };
 type Picked = { id: string; name: string; category: string | null; is_international: boolean };
 
 function LogRange({ value, lo, hi, step, onChange, label }: { value: number; lo: number; hi: number; step: number; onChange: (v: number) => void; label: string }) {
@@ -82,21 +86,25 @@ function ActPicker({ open, onClose, onPick }: { open: boolean; onClose: () => vo
   );
 }
 
-export default function PricingPage() {
+function PricingInner() {
   const { user } = useAuth();
+  const params = useSearchParams();   // shareable: ?act=<id>&an=<name>&city=&cap=&price=&month=&cat=
   const toast = useToast();
   const { data: citiesData } = useSWR('market-cities', getMarketCities);
   const { data: bm } = useSWR('price-benchmarks', getPriceBenchmarkTable);
   const cities = citiesData?.cities.map(c => c.name) ?? [];
   const catKeys = Object.keys(bm?.benchmarks ?? {});
 
-  const [act, setAct] = useState<Picked | null>(null);
+  const [act, setAct] = useState<Picked | null>(() => params.get('act') ? { id: params.get('act')!, name: params.get('an') ?? 'Selected act', category: params.get('ac'), is_international: params.get('intl') === '1' } : null);
   const [pickOpen, setPickOpen] = useState(false);
-  const [city, setCity] = useState('Mumbai');
-  const [category, setCategory] = useState('');
-  const [month, setMonth] = useState('');
-  const [capacity, setCapacity] = useState('8000');
-  const [price, setPrice] = useState('3000');
+  const [city, setCity] = useState(() => params.get('city') ?? 'Mumbai');
+  const [category, setCategory] = useState(() => params.get('cat') ?? '');
+  const [month, setMonth] = useState(() => params.get('month') ?? '');
+  const [capacity, setCapacity] = useState(() => params.get('cap') ?? '8000');
+  const [price, setPrice] = useState(() => params.get('price') ?? '3000');
+  const [chartMode, setChartMode] = useState<'attendance' | 'revenue'>('attendance');
+  const [scenarios, setScenarios] = useLocalList<Scenario>('liveiq-pricing-scenarios', 4);
+  const autoRan = useRef(false);
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<PricingResult | null>(null);
@@ -117,8 +125,7 @@ export default function PricingPage() {
   // Viewer-safe live preview: price by city (GET endpoint is not role-gated)
   const elasticity = useSWR(act && !errors.price ? ['elasticity', act.id, priceN] : null, () => getElasticityCurve(act!.id, priceN), { keepPreviousData: true });
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function run() {
     setTouched(true);
     if (!valid || !act) return;
     setBusy(true); setFailure(null);
@@ -132,6 +139,27 @@ export default function PricingPage() {
       if (status !== 403) toast('Couldn’t optimize price', 'error');
     } finally { setBusy(false); }
   }
+  function submit(e: React.FormEvent) { e.preventDefault(); void run(); }
+
+  // A shared link that carries an act runs the optimizer straight away.
+  useEffect(() => {
+    if (autoRan.current || !params.get('act') || !valid) return;
+    autoRan.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const shareUrl = () => {
+    const p = new URLSearchParams({ act: act!.id, an: act!.name, city, cap: capacity, price });
+    if (act!.category) p.set('ac', act!.category);
+    if (act!.is_international) p.set('intl', '1');
+    if (category) p.set('cat', category);
+    if (month) p.set('month', month);
+    return `${window.location.origin}/pricing?${p}`;
+  };
+  async function copyLink() {
+    try { await navigator.clipboard.writeText(shareUrl()); toast('Link copied', 'success'); } catch { toast('Couldn’t copy the link', 'error'); }
+  }
 
   const rec = result?.recommendation;
   const delta = rec ? rec.recommended_price - rec.proposed_price : null;
@@ -144,7 +172,23 @@ export default function PricingPage() {
     ['Season factor', `${result.signals.season_factor}×`],
     ['International premium', `${result.signals.international_factor}×`],
   ] : [];
-  const curve = useMemo(() => (elasticity.data?.elasticity_curve ?? []).slice(0, 12), [elasticity.data]);
+  const fillAtRec = rec?.predicted_fill_rate_at_recommended ?? null;
+  const revYours = rec && rec.predicted_fill_rate != null ? Math.round(rec.proposed_price * capN * rec.predicted_fill_rate / 100) : null;
+  const revRec = rec && fillAtRec != null ? Math.round(rec.recommended_price * capN * fillAtRec / 100) : null;
+  const sensData = useMemo(() => (rec?.sensitivity_curve ?? []).map(p => ({ ...p, revenue: Math.round(p.price * capN * p.attendance_pct / 100) })), [rec, capN]);
+  const bestRev = useMemo(() => sensData.reduce<{ price: number; revenue: number } | null>((b, p) => (!b || p.revenue > b.revenue ? { price: p.price, revenue: p.revenue } : b), null), [sensData]);
+  function saveScenario() {
+    if (!result || !rec) return;
+    const sc: Scenario = { id: `${Date.now()}`, act: result.entity.name, city, capacity: capN, price: rec.proposed_price, recommended: rec.recommended_price, fill: rec.predicted_fill_rate, fillAtRec, revenueYours: revYours, revenueRec: revRec, tier: rec.price_tier, savedAt: Date.now() };
+    setScenarios([sc, ...scenarios]);
+    toast('Scenario saved for comparison', 'success');
+  }
+  const curve = useMemo(() => {
+    const all = elasticity.data?.elasticity_curve ?? [];
+    const top = all.slice(0, 12);
+    const mine = all.find(c => c.city.toLowerCase() === city.toLowerCase());
+    return mine && !top.includes(mine) ? [...top, mine] : top;   // keep the selected city visible with 40 cities
+  }, [elasticity.data, city]);
   const maxCurve = Math.max(1, ...curve.map(c => c.optimal_price));
 
   return (
@@ -234,35 +278,74 @@ export default function PricingPage() {
                 <PriceLadder bench={result.benchmarks} proposed={rec.proposed_price} recommended={rec.recommended_price} />
               </GlassCard>
               <GlassCard className={styles.fill}>
-                <h3 className={styles.title}>Predicted fill</h3>
+                <h3 className={styles.title}>Predicted fill at {inrCompact(rec.proposed_price)}</h3>
                 <Ring value={rec.predicted_fill_rate} size={116} stroke={13} color="var(--text-primary)"><span style={{ fontFamily: ROUNDED, fontSize: '1.75rem', fontWeight: 700 }}>{rec.predicted_fill_rate != null ? `${Math.round(rec.predicted_fill_rate)}%` : '—'}</span></Ring>
                 <p className={styles.sub}>{rec.predicted_fill_rate != null ? `≈ ${num(Math.round(capN * rec.predicted_fill_rate / 100))} of ${num(capN)} seats` : 'No fill estimate'}</p>
+                {fillAtRec != null && <p className={styles.sub} data-testid="fill-at-rec">At the optimal {inrCompact(rec.recommended_price)}: {Math.round(fillAtRec)}% fill</p>}
               </GlassCard>
+              {revYours != null && (
+                <GlassCard className={styles.wide}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <div><h3 className={styles.title}>Expected gross revenue</h3><p className={styles.sub}>Price x seats x predicted fill, before costs</p></div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button type="button" className="btn btn-tinted btn-sm" onClick={saveScenario} data-testid="save-scenario"><Bookmark size={14} strokeWidth={1.75} /> Save scenario</button>
+                      <button type="button" className="btn btn-tinted btn-sm" onClick={copyLink} data-testid="copy-link"><Link2 size={14} strokeWidth={1.75} /> Copy link</button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }} data-testid="revenue-compare">
+                    <div><p className="num-rounded" style={{ fontSize: '1.75rem', fontWeight: 700 }} data-testid="rev-yours">{inrCompact(revYours)}</p><p className={styles.sub}>at your {inr(rec.proposed_price)}</p></div>
+                    {revRec != null && <div><p className="num-rounded" style={{ fontSize: '1.75rem', fontWeight: 700, color: revRec >= revYours ? 'var(--positive)' : 'var(--text-primary)' }} data-testid="rev-rec">{inrCompact(revRec)}</p><p className={styles.sub}>at the optimal {inr(rec.recommended_price)}</p></div>}
+                  </div>
+                </GlassCard>
+              )}
               <GlassCard className={styles.half}>
                 <h3 className={styles.title}>Why this price</h3>
                 <p className={styles.reason}>{rec.reasoning}</p>
                 <p className={styles.sub}>{rec.confidence} · model {result.model}</p>
+                <p className={styles.sub}>Optimal is the model price blended 70/30 with your proposal, held inside the {result.benchmarks.category} benchmark range.</p>
               </GlassCard>
               <GlassCard className={styles.half}>
                 <h3 className={styles.title}>Signals</h3>
                 <div className={styles.signalList}>{signals.map(([k, v]) => <div key={k} className={styles.signal}><span className={styles.reason}>{k}</span><span className="num-rounded" style={{ fontWeight: 600 }}>{v}</span></div>)}</div>
               </GlassCard>
               <GlassCard className={styles.wide}>
-                <div><h3 className={styles.title}>Price elasticity</h3><p className={styles.sub}>Expected attendance at each price point</p></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div><h3 className={styles.title}>Price sensitivity</h3><p className={styles.sub}>{chartMode === 'attendance' ? 'Expected attendance at each price point' : `Expected gross revenue at each price point${bestRev ? `. Best sampled price: ${inr(bestRev.price)}` : ''}`}</p></div>
+                  <Segmented ariaLabel="Chart metric" value={chartMode} onChange={setChartMode} options={[{ value: 'attendance', label: 'Attendance' }, { value: 'revenue', label: 'Revenue' }]} />
+                </div>
                 {rec.sensitivity_curve.length > 0 ? (
-                  <div className={styles.chart}><ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={rec.sensitivity_curve} margin={{ top: 8, right: 10, left: -12, bottom: 0 }}>
+                  <div className={styles.chart} data-testid="sens-chart"><ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={sensData} margin={{ top: 8, right: 10, left: -12, bottom: 0 }}>
                       <defs><linearGradient id="elg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="var(--accent)" stopOpacity={.3} /><stop offset="100%" stopColor="var(--accent)" stopOpacity={0} /></linearGradient></defs>
                       <CartesianGrid stroke="var(--divider)" vertical={false} />
                       <XAxis dataKey="price" type="number" domain={['dataMin', 'dataMax']} tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => inrCompact(v)} />
-                      <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} />
-                      <Tooltip contentStyle={{ background: 'var(--glass-fill-strong)', border: '1px solid var(--glass-border)', borderRadius: 12, fontSize: 12 }} formatter={(v: unknown) => [`${v}%`, 'Attendance']} labelFormatter={(v: unknown) => inr(Number(v))} />
+                      {chartMode === 'attendance'
+                        ? <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `${v}%`} />
+                        : <YAxis tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} axisLine={false} tickLine={false} width={56} tickFormatter={(v: number) => inrCompact(v)} />}
+                      <Tooltip contentStyle={{ background: 'var(--glass-fill-strong)', border: '1px solid var(--glass-border)', borderRadius: 12, fontSize: 12 }} formatter={(v: unknown) => chartMode === 'attendance' ? [`${v}%`, 'Attendance'] : [inr(Number(v)), 'Gross revenue']} labelFormatter={(v: unknown) => inr(Number(v))} />
                       <ReferenceLine x={rec.recommended_price} stroke="var(--accent)" strokeDasharray="4 3" label={{ value: 'Optimal', fill: 'var(--accent)', fontSize: 11, position: 'insideTopRight' }} />
-                      <Area type="monotone" dataKey="attendance_pct" stroke="var(--accent)" strokeWidth={2.5} fill="url(#elg)" dot={false} />
+                      <Area type="monotone" dataKey={chartMode === 'attendance' ? 'attendance_pct' : 'revenue'} stroke="var(--accent)" strokeWidth={2.5} fill="url(#elg)" dot={false} />
                     </AreaChart></ResponsiveContainer></div>
                 ) : <p className="t-callout text-tertiary">The ML model fell back to rules for this request, so no elasticity curve is available.</p>}
               </GlassCard>
             </motion.div>
+          )}
+
+          {scenarios.length > 0 && (
+            <GlassCard className={styles.wide}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div><h3 className={styles.title}>Saved scenarios</h3><p className={styles.sub}>Compare optimizer runs side by side. Stored on this device.</p></div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setScenarios([])}><Trash2 size={14} strokeWidth={1.75} /> Clear</button>
+              </div>
+              <div style={{ overflowX: 'auto' }} data-testid="scenarios">
+                <table className="table" style={{ minWidth: 560 }}>
+                  <thead><tr><th>Act</th><th>City</th><th>Seats</th><th>Your price</th><th>Optimal</th><th>Fill at optimal</th><th>Gross at optimal</th></tr></thead>
+                  <tbody>{scenarios.map(sc => (
+                    <tr key={sc.id} data-testid="scenario-row"><td>{sc.act}</td><td>{sc.city}</td><td className="tnum">{num(sc.capacity)}</td><td className="tnum">{inr(sc.price)}</td><td className="tnum">{inr(sc.recommended)}</td><td className="tnum">{sc.fillAtRec != null ? `${Math.round(sc.fillAtRec)}%` : '—'}</td><td className="tnum">{sc.revenueRec != null ? inrCompact(sc.revenueRec) : '—'}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </GlassCard>
           )}
 
           {!result && (
@@ -272,7 +355,7 @@ export default function PricingPage() {
                 {bench ? <PriceLadder bench={bench} proposed={price && !errors.price ? priceN : null} recommended={null} /> : <Skeleton height={80} radius={14} />}
               </GlassCard>
               <GlassCard className={styles.wide} delay={0.1}>
-                <div><h3 className={styles.title}>Price level by city</h3><p className={styles.sub}>{act ? `Where ${act.name} supports the highest ticket, starting from ${inr(priceN)}` : 'Choose an act to see how the same ticket prices across Indian cities.'}</p></div>
+                <div><h3 className={styles.title}>Price level by city</h3><p className={styles.sub}>{act ? `Relative price level for ${act.name} across cities, scaled from ${inr(priceN)} by demand, city tier and income (a quick preview; run the optimizer for the ML price)` : 'Choose an act to see how the same ticket prices across Indian cities.'}</p></div>
                 {!act ? <EmptyState title="Pick an act" message="City price levels are shown for the act you choose." />
                   : !elasticity.data ? <Skeleton height={140} radius={14} />
                   : <div className={styles.bars} data-testid="city-bars">{curve.map(c => (
@@ -287,4 +370,8 @@ export default function PricingPage() {
       <ActPicker open={pickOpen} onClose={() => setPickOpen(false)} onPick={setAct} />
     </Page>
   );
+}
+
+export default function PricingPage() {
+  return <Suspense fallback={null}><PricingInner /></Suspense>;
 }

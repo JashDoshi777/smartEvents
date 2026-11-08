@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
+
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
@@ -51,7 +53,6 @@ function Content() {
   const ok = sent.data?.status === 'ok';
   const posts = sent.data?.recent_posts ?? [];
   const tops = topics.data?.topics ?? [];
-  const maxTop = Math.max(1, ...tops.map(t => t.mentions));
   const alerts = crisis.data?.alerts ?? [];
   const pickerList = (() => { const x = all.find(e => e.id === entityId); return x && !scoped.some(e => e.id === entityId) ? [x, ...scoped] : scoped; })();
   const segs = [

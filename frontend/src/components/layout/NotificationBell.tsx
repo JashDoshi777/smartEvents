@@ -4,19 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, Info, TrendingUp, Flame, CheckCheck, Star } from 'lucide-react';
-import { getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, NotificationItem } from '@/lib/api';
+import { getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead, NotificationItem, NotificationsResponse } from '@/lib/api';
+import { timeAgo as ago } from '@/lib/format';
 import styles from './NotificationBell.module.css';
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return '';
-  const diffMs = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
 
 function severityColor(sev: string) {
   if (sev === 'high' || sev === 'critical') return 'var(--negative)';
@@ -48,14 +38,25 @@ function NotificationRow({ n, onRead }: { n: NotificationItem; onRead: (id: stri
           {n.title ?? n.entity ?? 'Signal detected'}
         </p>
         {n.message && <p className={styles.rowMessage}>{n.message}</p>}
-        <span className={styles.rowTime}>{timeAgo(n.detected_at)}</span>
+        <span className={styles.rowTime}>{n.detected_at ? ago(n.detected_at) : ''}</span>
       </div>
       {!n.is_read && <div className={styles.unreadDot} />}
     </button>
   );
 }
 
+const PREF_KEY = 'liveiq-notif-watchlist-only';
+export function readWatchlistOnly(): boolean { try { return localStorage.getItem(PREF_KEY) === '1'; } catch { return false; } }
+export function writeWatchlistOnly(v: boolean) { try { localStorage.setItem(PREF_KEY, v ? '1' : '0'); window.dispatchEvent(new Event('liveiq-prefs')); } catch { /* storage unavailable */ } }
+
 export function NotificationBell() {
+  const [watchOnly, setWatchOnly] = useState(false);
+  useEffect(() => {
+    const sync = () => setWatchOnly(readWatchlistOnly());
+    sync();
+    window.addEventListener('liveiq-prefs', sync);
+    return () => window.removeEventListener('liveiq-prefs', sync);
+  }, []);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -64,32 +65,35 @@ export function NotificationBell() {
     refreshInterval: 60000,
     shouldRetryOnError: false,
   });
-  const { data: listData, isLoading } = useSWR(
+  const { data: listData, isLoading, error: listError, mutate: reloadList } = useSWR(
     open ? 'notifications/list' : null,
     () => getNotifications(),
     { refreshInterval: 60000, shouldRetryOnError: false }
   );
 
-  const notifications = listData?.notifications ?? [];
-  // While the dropdown is open, derive the badge count from the same list
-  // response the dropdown renders — two independent polling timers (this
-  // count and the list) can drift out of sync with each other between
-  // ticks, so once we have the list we treat it as the single source of
-  // truth rather than trusting a second, separately-polled number.
-  const unreadCount = open && listData
-    ? notifications.filter(n => !n.is_read).length
-    : countData?.unread_count ?? 0;
+  const notifications = (listData?.notifications ?? []).filter(n => !watchOnly || n.is_watched);
+  // The server count is the single source of truth: the list is capped (newest 20),
+  // so deriving the badge from it would under-report when more are unread.
+  const unreadCount = countData?.unread_count ?? 0;
+  const [failed, setFailed] = useState(false);
 
   async function handleRead(id: string) {
-    await markNotificationRead(id);
-    mutate('notifications/unread-count');
-    mutate('notifications/list');
+    setFailed(false);
+    // Optimistic: flip the row and decrement the badge instantly, then reconcile with the server.
+    void mutate('notifications/list', (cur: NotificationsResponse | undefined) => cur && ({ ...cur, notifications: cur.notifications.map(n => n.id === id ? { ...n, is_read: true } : n) }), { revalidate: false });
+    void mutate('notifications/unread-count', (cur: { unread_count: number } | undefined) => cur && ({ unread_count: Math.max(0, cur.unread_count - 1) }), { revalidate: false });
+    try { await markNotificationRead(id); } catch { setFailed(true); }
+    void mutate('notifications/unread-count');
+    void mutate('notifications/list');
   }
 
   async function handleReadAll() {
-    await markAllNotificationsRead();
-    mutate('notifications/unread-count');
-    mutate('notifications/list');
+    setFailed(false);
+    void mutate('notifications/list', (cur: NotificationsResponse | undefined) => cur && ({ ...cur, notifications: cur.notifications.map(n => ({ ...n, is_read: true })) }), { revalidate: false });
+    void mutate('notifications/unread-count', { unread_count: 0 }, { revalidate: false });
+    try { await markAllNotificationsRead(); } catch { setFailed(true); }
+    void mutate('notifications/unread-count');
+    void mutate('notifications/list');
   }
 
   useEffect(() => {
@@ -143,7 +147,13 @@ export function NotificationBell() {
               </div>
 
               <div className={styles.list}>
-                {isLoading ? (
+                {failed && <p className="t-caption" style={{ padding: '8px 16px', color: 'var(--negative)' }} role="alert">Couldn’t update. Try again.</p>}
+                {listError && !listData ? (
+                  <div className={styles.empty}>
+                    <p className="t-caption text-tertiary">Couldn’t load notifications.</p>
+                    <button className="btn btn-sm btn-ghost" style={{ color: 'var(--accent)', marginTop: 6 }} onClick={() => reloadList()}>Retry</button>
+                  </div>
+                ) : isLoading && !listData ? (
                   <div style={{ padding: 20 }}>
                     <div className="skeleton" style={{ height: 60, borderRadius: 8, marginBottom: 8 }} />
                     <div className="skeleton" style={{ height: 60, borderRadius: 8 }} />

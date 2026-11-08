@@ -37,6 +37,7 @@ default when there is nothing real to measure.
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -45,6 +46,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sql import ilike_contains
 from app.models.event import Event
 from app.models.venue import Venue
 from app.models.intelligence import SocialPost
@@ -62,6 +64,8 @@ EXPOSURE_LOOKBACK_DAYS = 180  # events older than this don't count at all — re
 SATURATION_FLOOR = 0.15
 # Above this many, treat as fully saturated (multiplier bottoms out).
 SATURATION_CEILING = 3.0
+COMBINED_MIN = 0.40   # hard floor for the product of all factors
+COMBINED_MAX = 1.50   # hard ceiling
 MAX_SATURATION_PENALTY = 0.35   # multiplier can drop to (1 - this) = 0.65 at full saturation
 
 # An entity who hasn't played a city in this long (or ever) gets the
@@ -109,7 +113,7 @@ async def _exposure_factor(db: AsyncSession, entity_id, city: Optional[str]) -> 
 
     query = select(Event.event_date).where(Event.entity_id == entity_id, Event.event_date <= now)
     if city:
-        query = query.join(Venue, Event.venue_id == Venue.id).where(Venue.city.ilike(f"%{city}%"))
+        query = query.join(Venue, Event.venue_id == Venue.id).where(ilike_contains(Venue.city, city))
     result = await db.execute(query.order_by(Event.event_date.desc()))
     all_dates = [row[0] for row in result.all()]
 
@@ -190,7 +194,7 @@ async def _fomo_factor(db: AsyncSession, city: Optional[str], event_date: Option
     weekend_end = event_date + timedelta(days=3)
     count_result = await db.execute(
         select(func.count()).select_from(Event).join(Venue, Event.venue_id == Venue.id).where(
-            Venue.city.ilike(f"%{city}%"),
+            ilike_contains(Venue.city, city),
             Event.event_date >= weekend_start,
             Event.event_date <= weekend_end,
         )
@@ -270,6 +274,7 @@ async def compute_psychology_report(
     entity_id,
     city: Optional[str] = None,
     event_date: Optional[datetime] = None,
+    session_factory=None,
 ) -> PsychologyReport:
     """
     Combines all four real factors multiplicatively (each is an
@@ -277,9 +282,22 @@ async def compute_psychology_report(
     rather than average — a fully saturated AND controversy-hit entity
     should be worse than either effect alone, not "averaged out").
     """
-    exposure = await _exposure_factor(db, entity_id, city)
-    fomo = await _fomo_factor(db, city, event_date)
-    controversy = await _controversy_factor(db, entity_id)
+    if session_factory is not None:
+        # The three factor queries are independent: run them concurrently on
+        # separate sessions (1 round-trip of latency instead of 3).
+        async def _run(fn, *args):
+            async with session_factory() as s:
+                return await fn(s, *args)
+
+        exposure, fomo, controversy = await asyncio.gather(
+            _run(_exposure_factor, entity_id, city),
+            _run(_fomo_factor, city, event_date),
+            _run(_controversy_factor, entity_id),
+        )
+    else:
+        exposure = await _exposure_factor(db, entity_id, city)
+        fomo = await _fomo_factor(db, city, event_date)
+        controversy = await _controversy_factor(db, entity_id)
 
     factors = [exposure, fomo, controversy]
     combined = 1.0
@@ -293,6 +311,10 @@ async def compute_psychology_report(
         coverage_gaps.append("no city/date given for FOMO check")
     if controversy.real_signal.get("posts_in_window", 0) < 3:
         coverage_gaps.append("insufficient social data for controversy check")
+
+    # Hard safety bounds: factors compound, so clamp the product to a sane
+    # range no matter how the individual caps are retuned later.
+    combined = min(COMBINED_MAX, max(COMBINED_MIN, combined))
 
     return PsychologyReport(
         entity_id=str(entity_id),

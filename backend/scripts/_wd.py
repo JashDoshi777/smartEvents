@@ -73,28 +73,33 @@ def search(term, limit=8, lang="en"):
     return [x["id"] for x in (r.json().get("search", []) if r else [])]
 
 
-def get_entities(qids, props="claims|labels|aliases|sitelinks|descriptions"):
+def get_entities(qids, props="claims|labels|aliases|sitelinks|descriptions", need_v=0):
     """Batch-fetch (50/call), cached per QID."""
     out, todo = {}, []
     for q in qids:
         p = _cache_path("Q_" + q)
         if os.path.exists(p):
-            out[q] = json.load(open(p))
+            v = json.load(open(p))
+            if (v.get("label") is None and not v.get("_mul")) or v.get("_v", 1) < need_v:
+                todo.append(q)  # re-fetch: earlier fetch predates 'mul' label support
+            else:
+                out[q] = v
         else:
             todo.append(q)
     for i in range(0, len(todo), 50):
         chunk = todo[i:i + 50]
         r = get(WD_API, dict(action="wbgetentities", ids="|".join(chunk), props=props,
-                             languages="en", sitefilter="enwiki", format="json"))
+                             languages="en|mul", sitefilter="enwiki", format="json"))
         if not r:
             continue
         for q, e in r.json().get("entities", {}).items():
             if "missing" in e:
                 continue
             slim = {
-                "label": e.get("labels", {}).get("en", {}).get("value"),
+                "_mul": True, "_v": 2,
+                "label": (e.get("labels", {}).get("en") or e.get("labels", {}).get("mul") or {}).get("value"),
                 "desc": e.get("descriptions", {}).get("en", {}).get("value"),
-                "aliases": [a["value"] for a in e.get("aliases", {}).get("en", [])],
+                "aliases": [a["value"] for a in e.get("aliases", {}).get("en", []) + e.get("aliases", {}).get("mul", [])],
                 "enwiki": e.get("sitelinks", {}).get("enwiki", {}).get("title"),
                 "claims": {},
             }
@@ -102,8 +107,8 @@ def get_entities(qids, props="claims|labels|aliases|sitelinks|descriptions"):
             for pid, cl in e.get("claims", {}).items():
                 vals = []
                 for c in cl:
-                    if c.get("rank") == "deprecated":
-                        continue
+                    if c.get("rank") == "deprecated" or "P582" in c.get("qualifiers", {}):
+                        continue  # deprecated, or ended (historical) statement
                     sn = c.get("mainsnak", {})
                     if sn.get("snaktype") != "value":
                         continue

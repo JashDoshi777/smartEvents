@@ -140,7 +140,7 @@ async def recommend_pairs(
     stmt = (
         select(Entity, EntityMetric)
         .join(EntityMetric, Entity.id == EntityMetric.entity_id)
-        .where(Entity.status == "active", Entity.entity_type == "artist")
+        .where(Entity.status == "active", Entity.entity_type == "artist", EntityMetric.composite_score.isnot(None))
         .order_by(desc(EntityMetric.time))
     )
     if request.market:
@@ -227,6 +227,9 @@ async def recommend_pairs(
                 "entity_a": {"id": str(e1.id), "name": e1.name, "category": e1.category, "composite_score": m1.composite_score},
                 "entity_b": {"id": str(e2.id), "name": e2.name, "category": e2.category, "composite_score": m2.composite_score},
                 "shared_genres": sorted(overlap),
+                # False when either artist has no booking fee on file: the budget filter and the
+                # combined-fee estimate then only cover the artist(s) that do have one.
+                "fee_complete": all(x is not None for x in (e1.booking_price_range_min, e1.booking_price_range_max, e2.booking_price_range_min, e2.booking_price_range_max)),
                 "similarity_score": round(similarity * 100, 1),
                 "combined_booking_fee_estimate": (
                     round(((e1.booking_price_range_min or 0) + (e1.booking_price_range_max or 0)) / 2 +

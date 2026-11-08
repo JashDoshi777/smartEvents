@@ -1,21 +1,25 @@
 """
-LiveIQ — Trends Routes (Sprint 2B)
-Real DB-backed trend intelligence.
+LiveIQ — Trends Routes
+Real DB-backed trend intelligence. Every listing accepts `market=india|global|all`
+and ranks the LATEST scored snapshot per entity (one row per entity).
 """
 
 from typing import Optional
+
 import structlog
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, desc, func, or_
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
-from app.models.entity import Entity
-from app.models.metrics import EntityMetric
 from app.api.deps import get_current_user
-from app.services.latest_metric import latest_metric
-from app.services.market_scope import market_clause
+from app.core.database import get_db, run_queries
+from app.core.sql import ilike_contains
+from app.models.entity import Entity
+from app.models.event import Event
 from app.models.user import User
+from app.models.venue import Venue
+from app.services.latest_metric import latest_metric, trend_direction
+from app.services.market_scope import Market, market_clause
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -23,173 +27,162 @@ logger = structlog.get_logger()
 
 @router.get("/breakout", summary="Top entities by composite score")
 async def get_breakouts(
-    category: Optional[str] = Query(None, description="Filter by: Bollywood, Punjabi Pop, K-Pop..."),
-    entity_type: Optional[str] = Query(None, description="Filter by: artist, comedian, sports_team..."),
+    category: Optional[str] = Query(None, max_length=100, description="Filter by: Bollywood, Punjabi Pop, K-Pop..."),
+    entity_type: Optional[str] = Query(None, max_length=50, description="Filter by: artist, comedian, sports_team..."),
     is_international: Optional[bool] = Query(None),
-    market: str = Query("all", pattern="^(all|india|global)$"),
-    limit: int = Query(10, le=50),
+    market: Market = "all",
+    limit: int = Query(10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """
-    Returns top entities ranked by latest composite score.
-    Entities with no metrics yet are listed separately.
-    Sprint 4: will use IsolationForest anomaly detection for true breakout prediction.
+    Top entities ranked by latest composite score. If no scored entity matches
+    the filters, falls back to a verified/active ordering with null scores
+    (same market/category/type/international filters apply to the fallback).
     """
-    # Get latest metric per entity using a simple join ordered by time desc
-    # (Simpler than correlated subquery — works with both NeonDB and test mocks)
-    EntityMetric = latest_metric()  # one row per entity (newest snapshot)
-    stmt = (
-        select(Entity, EntityMetric)
-        .join(EntityMetric, Entity.id == EntityMetric.entity_id)
-    )
-    stmt = stmt.where(market_clause(market))
-    if category:
-        stmt = stmt.where(Entity.category.ilike(f"%{category}%"))
-    if entity_type:
-        stmt = stmt.where(Entity.entity_type == entity_type)
-    if is_international is not None:
-        stmt = stmt.where(Entity.is_international == is_international)
+    lm = latest_metric()
 
-    stmt = stmt.order_by(EntityMetric.composite_score.desc().nullslast()).limit(limit)
-    result = await db.execute(stmt)
-    rows = result.all()
+    def _filters(stmt):
+        stmt = stmt.where(market_clause(market))
+        if category:
+            stmt = stmt.where(ilike_contains(Entity.category, category))
+        if entity_type:
+            stmt = stmt.where(Entity.entity_type == entity_type)
+        if is_international is not None:
+            stmt = stmt.where(Entity.is_international == is_international)
+        return stmt
+
+    scored_stmt = _filters(select(Entity, lm).join(lm, Entity.id == lm.entity_id)).order_by(
+        lm.composite_score.desc(), Entity.name, Entity.id
+    ).limit(limit)
+    fallback_stmt = _filters(select(Entity).where(Entity.status == "active")).order_by(
+        Entity.is_verified.desc().nullslast(), Entity.is_active_on_district.desc().nullslast(), Entity.name, Entity.id
+    ).limit(limit)
+    rows, fallback_rows = await run_queries(scored_stmt, fallback_stmt)
 
     scored = [
         {
-            "entity_id": str(e.id),
-            "name": e.name,
-            "entity_type": e.entity_type,
-            "category": e.category,
-            "country": e.country,
-            "composite_score": round(m.composite_score or 0, 1),
-            "trend_direction": "rising" if (m.trend_velocity or 0) > 2 else (
-                "falling" if (m.trend_velocity or 0) < -2 else "stable"
-            ),
+            "entity_id": str(e.id), "name": e.name, "entity_type": e.entity_type,
+            "category": e.category, "country": e.country,
+            "composite_score": round(m.composite_score, 1),
+            "trend_direction": trend_direction(m.trend_velocity),
             "lastfm_listeners": m.lastfm_listeners,
             "news_mentions_7d": m.news_mentions_7d,
             "google_trend_score": m.google_trend_score,
+            "data_completeness": m.data_completeness,
             "last_updated": m.time.isoformat() if m.time else None,
         }
         for e, m in rows
     ]
-
-    # If no metrics yet, return top entities by verification/active status
     if not scored:
-        fallback_stmt = select(Entity).where(Entity.status == "active")
-        if category:
-            fallback_stmt = fallback_stmt.where(Entity.category.ilike(f"%{category}%"))
-        if entity_type:
-            fallback_stmt = fallback_stmt.where(Entity.entity_type == entity_type)
-        fallback_stmt = fallback_stmt.order_by(
-            Entity.is_verified.desc(),
-            Entity.is_active_on_district.desc(),
-        ).limit(limit)
-        fallback_result = await db.execute(fallback_stmt)
-        fallback_entities = fallback_result.scalars().all()
-
         scored = [
             {
-                "entity_id": str(e.id),
-                "name": e.name,
-                "entity_type": e.entity_type,
-                "category": e.category,
-                "country": e.country,
-                "composite_score": None,
-                "trend_direction": "pending",
-                "listener_delta_7d": None,
-                "news_mentions_7d": None,
-                "google_trend_score": None,
-                "last_updated": None,
+                "entity_id": str(r[0].id), "name": r[0].name, "entity_type": r[0].entity_type,
+                "category": r[0].category, "country": r[0].country,
+                "composite_score": None, "trend_direction": "pending",
+                "lastfm_listeners": None, "news_mentions_7d": None, "google_trend_score": None,
+                "data_completeness": None, "last_updated": None,
             }
-            for e in fallback_entities
+            for r in fallback_rows
         ]
 
     return {
         "predictions": scored,
         "total": len(scored),
+        "market": market,
         "has_live_scores": any(p["composite_score"] is not None for p in scored),
-        "note": "Scores computed from Last.fm, YouTube, Google Trends, NewsAPI signals.",
+        "note": "Scores computed from Last.fm, YouTube, Google Trends, NewsAPI signals (weights renormalised over available sources; see data_completeness).",
     }
 
 
 @router.get("/viral", summary="Entities with highest news + social spike")
 async def get_viral_signals(
-    market: str = Query("all", pattern="^(all|india|global)$"),
-    limit: int = Query(10, le=30),
+    market: Market = "all",
+    limit: int = Query(10, ge=1, le=30),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """
-    Returns entities with highest news mention spike in the last 7 days.
-    Sprint 4: will add Instagram Reels + YouTube Shorts view velocity.
-    """
-    EntityMetric = latest_metric()  # one row per entity (newest snapshot)
+    """Entities with the most news mentions in the last 7 days (only entities with > 0 mentions)."""
+    lm = latest_metric()
     stmt = (
-        select(Entity, EntityMetric)
-        .join(EntityMetric, Entity.id == EntityMetric.entity_id)
-        .where(EntityMetric.news_mentions_7d.isnot(None))
+        select(Entity, lm)
+        .join(lm, Entity.id == lm.entity_id)
+        .where(lm.news_mentions_7d > 0, market_clause(market))
+        .order_by(desc(lm.news_mentions_7d), lm.composite_score.desc(), Entity.name, Entity.id)
+        .limit(limit)
     )
-    stmt = stmt.where(market_clause(market))
-    stmt = stmt.order_by(desc(EntityMetric.news_mentions_7d)).limit(limit)
-    result = await db.execute(stmt)
-    rows = result.all()
+    rows = (await db.execute(stmt)).all()
 
     signals = [
         {
-            "entity_id": str(e.id),
-            "name": e.name,
-            "entity_type": e.entity_type,
+            "entity_id": str(e.id), "name": e.name, "entity_type": e.entity_type,
             "news_mentions_7d": m.news_mentions_7d,
             "google_trend_score": m.google_trend_score,
-            "composite_score": round(m.composite_score or 0, 1),
+            "composite_score": round(m.composite_score, 1),
             "sentiment_compound": m.sentiment_compound,
         }
         for e, m in rows
     ]
-
     if not signals:
-        return {
-            "signals": [],
-            "message": "No metrics collected yet. Celery workers will populate this data.",
-        }
-
-    return {"signals": signals, "total": len(signals)}
+        return {"signals": [], "total": 0, "market": market,
+                "message": "No metrics collected yet. Celery workers will populate this data."}
+    return {"signals": signals, "total": len(signals), "market": market}
 
 
 @router.get("/genre/{city}", summary="Top genres by city")
-async def get_genre_momentum(city: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    """Genre distribution for a given city — Sprint 4 will add momentum scoring."""
-    stmt = (
-        select(Entity.genre, func.count(Entity.id).label("count"))
-        .where(Entity.genre.isnot(None))
-        .group_by(Entity.genre)
-        .order_by(desc("count"))
-        .limit(10)
+async def get_genre_momentum(
+    city: str,
+    market: Market = "all",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Genre distribution for a city: entities that have events at venues in that
+    city, grouped by genre. When the city has no event history the global
+    genre distribution is returned instead and `scope` says so (the previous
+    version ignored `city` entirely).
+    """
+    city = city.strip()[:100]
+    city_stmt = (
+        select(Entity.genre, func.count(func.distinct(Entity.id)).label("count"))
+        .join(Event, Event.entity_id == Entity.id)
+        .join(Venue, Venue.id == Event.venue_id)
+        .where(Entity.genre.isnot(None), ilike_contains(Venue.city, city), market_clause(market))
+        .group_by(Entity.genre).order_by(desc("count"), Entity.genre).limit(10)
     )
-    result = await db.execute(stmt)
-    rows = result.all()
+    global_stmt = (
+        select(Entity.genre, func.count(Entity.id).label("count"))
+        .where(Entity.genre.isnot(None), market_clause(market))
+        .group_by(Entity.genre).order_by(desc("count"), Entity.genre).limit(10)
+    )
+    city_rows, global_rows = await run_queries(city_stmt, global_stmt)
+    rows, scope = (city_rows, "city") if city_rows else (global_rows, "global_fallback")
 
     return {
         "city": city,
+        "scope": scope,
+        "market": market,
         "genres": [{"genre": r[0], "entity_count": r[1]} for r in rows],
-        "note": "Sprint 4: will weight by city-specific ticket sales velocity.",
+        "note": "City scope = entities with events at venues in the city; falls back to the global distribution when the city has none.",
     }
 
 
 @router.get("/regional", summary="Regional culture shifts across India")
-async def get_regional_trends(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    """Returns entity distribution by country/market — Sprint 4 will add inter-city movement."""
+async def get_regional_trends(
+    market: Market = "all",
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Entity distribution by country."""
     stmt = (
         select(Entity.country, func.count(Entity.id).label("count"))
-        .where(Entity.country.isnot(None))
+        .where(Entity.country.isnot(None), market_clause(market))
         .group_by(Entity.country)
-        .order_by(desc("count"))
+        .order_by(desc("count"), Entity.country)
     )
-    result = await db.execute(stmt)
-    rows = result.all()
-
+    rows = (await db.execute(stmt)).all()
     return {
         "regions": [{"country": r[0], "entity_count": r[1]} for r in rows],
         "total_entities": sum(r[1] for r in rows),
+        "market": market,
     }

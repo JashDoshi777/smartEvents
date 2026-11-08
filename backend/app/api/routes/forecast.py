@@ -19,6 +19,7 @@ schedule, entities will cross the threshold and get real forecasts
 without any code change here.
 """
 
+import asyncio
 from typing import Optional
 from uuid import UUID
 
@@ -77,9 +78,6 @@ async def forecast_demand(
 
     history = [{"date": t.date().isoformat(), "google_trend_score": score} for t, score in rows]
 
-    if not PROPHET_AVAILABLE:
-        raise HTTPException(503, "Prophet is not installed on this server — forecasting unavailable")
-
     span_days = (rows[-1][0] - rows[0][0]).days if len(rows) >= 2 else 0
 
     if len(rows) < MIN_HISTORY_POINTS or span_days < MIN_HISTORY_DAYS_SPAN:
@@ -100,10 +98,13 @@ async def forecast_demand(
             ),
         }
 
+    if not PROPHET_AVAILABLE:
+        raise HTTPException(503, "Prophet is not installed on this server — forecasting unavailable")
+
     # Prophet requires tz-naive timestamps — DB values are tz-aware (UTC).
     df = pd.DataFrame([{"ds": t.replace(tzinfo=None), "y": score} for t, score in rows])
 
-    try:
+    def _fit_predict():
         model = Prophet(
             yearly_seasonality=False,   # not enough history to detect yearly patterns honestly
             weekly_seasonality=len(rows) >= 14,
@@ -112,7 +113,11 @@ async def forecast_demand(
         )
         model.fit(df)
         future = model.make_future_dataframe(periods=months * 30, freq="D")
-        forecast_df = model.predict(future)
+        return model.predict(future)
+
+    try:
+        # Prophet's Stan fit is CPU-bound and blocks for seconds — keep it off the event loop.
+        forecast_df = await asyncio.to_thread(_fit_predict)
     except Exception as exc:
         logger.warning("forecast_demand: Prophet fit/predict failed", entity=entity.name, error=str(exc))
         raise HTTPException(500, f"Forecast model failed to fit this entity's data: {exc}")
@@ -130,7 +135,15 @@ async def forecast_demand(
 
     first_val = float(df["y"].iloc[0])
     last_val = float(df["y"].iloc[-1])
-    trend_direction = "rising" if last_val > first_val * 1.1 else "falling" if last_val < first_val * 0.9 else "stable"
+    history_trend = "rising" if last_val > first_val * 1.1 else "falling" if last_val < first_val * 0.9 else "stable"
+    # Direction of the PROJECTION: where the forecast ends vs the recent level (mean of the last
+    # 3 observations, so one noisy reading can't flip it). Previously this reported the
+    # history's first-vs-last move, which could contradict the forecast line shown beside it.
+    recent = float(df["y"].tail(3).mean())
+    end_val = forecast_points[-1]["predicted_trend_score"] if forecast_points else recent
+    trend_direction = (
+        "rising" if end_val > recent * 1.1 else "falling" if end_val < recent * 0.9 else "stable"
+    )
 
     return {
         "entity": {"id": entity_id, "name": entity.name},
@@ -140,6 +153,7 @@ async def forecast_demand(
         "history_points": len(rows),
         "history_span_days": span_days,
         "trend_direction": trend_direction,
+        "history_trend_direction": history_trend,
         "forecast": forecast_points,
         "methodology": (
             f"Facebook Prophet fit on {len(rows)} real google_trend_score snapshots spanning "

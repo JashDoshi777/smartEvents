@@ -2,7 +2,9 @@
 import asyncio
 import time
 from fastapi import APIRouter
-from app.core.database import check_db_connection
+from fastapi.responses import JSONResponse
+from app.core.database import check_db_connection, engine
+from app.core.response_cache import cache_stats
 from app.core.mongodb import check_mongo_connection
 from app.core.redis_client import check_redis_connection
 from app.core.config import settings
@@ -18,7 +20,7 @@ async def health():
     # Dependency pings are slow when a backing service is down (DNS / TCP
     # timeouts), so probe them concurrently and reuse the result for 30s.
     if _HEALTH_CACHE["value"] and time.monotonic() - _HEALTH_CACHE["at"] < 30:
-        return _HEALTH_CACHE["value"]
+        return _respond(_HEALTH_CACHE["value"])
     db, mongo, redis = await asyncio.gather(
         check_db_connection(), check_mongo_connection(), check_redis_connection()
     )
@@ -47,7 +49,24 @@ async def health():
         },
     }
     _HEALTH_CACHE.update(at=time.monotonic(), value=result)
-    return result
+    return _respond(result)
+
+
+def _live(result: dict) -> dict:
+    """Cheap, always-fresh parts (no I/O): response-cache + DB pool stats."""
+    pool = engine.pool
+    try:
+        pool_info = {"size": pool.size(), "checked_out": pool.checkedout(), "overflow": pool.overflow()}
+    except Exception:  # pragma: no cover - pool impl without these
+        pool_info = {}
+    return {**result, "cache": cache_stats(), "db_pool": pool_info}
+
+
+def _respond(result: dict):
+    body = _live(result)
+    if result["status"] != "ok":  # load balancers key off the status code
+        return JSONResponse(status_code=503, content=body, headers={"Retry-After": "5"})
+    return body
 
 
 @router.get("/", include_in_schema=False)

@@ -3,12 +3,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Check, ChevronDown, ChevronRight, RotateCcw, Sparkles, Square, SquarePen } from 'lucide-react';
+import { ArrowUp, Check, ChevronDown, ChevronRight, Copy, Database, History, RotateCcw, Square, SquarePen, Trash2 } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
+import { Sheet } from '@/components/ui/Sheet';
+import { useToast } from '@/components/ui/Toast';
+import { useLocalList } from '@/lib/useLocalList';
 import { getAccessToken, getCopilotModels } from '@/lib/api';
 import styles from './page.module.css';
 
-interface Msg { id: number; role: 'user' | 'assistant'; content: string; ts: number; error?: string; streaming?: boolean }
+interface Msg { id: number; role: 'user' | 'assistant'; content: string; ts: number; error?: string; streaming?: boolean; sources?: string[] }
+interface Chat { id: string; title: string; updated: number; msgs: Msg[] }
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 const SUGGESTIONS = [
@@ -48,6 +52,14 @@ function Markdown({ text }: { text: string }) {
         while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
         i++; res.push(<pre key={k++}>{buf.join('\n')}</pre>); continue;
       }
+      if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1] ?? '')) {
+        const cells = (row: string) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+        const head = cells(l); i += 2;
+        const body: string[][] = [];
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) body.push(cells(lines[i++]));
+        res.push(<div key={k++} className={styles.tableWrap}><table><thead><tr>{head.map((h, j) => <th key={j}>{inline(h, `th${k}${j}`)}</th>)}</tr></thead><tbody>{body.map((r, ri) => <tr key={ri}>{r.map((c, j) => <td key={j}>{inline(c, `td${k}${ri}${j}`)}</td>)}</tr>)}</tbody></table></div>);
+        continue;
+      }
       if (/^\s*[-*•]\s+/.test(l)) {
         const items: string[] = [];
         while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*[-*•]\s+/, ''));
@@ -60,8 +72,8 @@ function Markdown({ text }: { text: string }) {
       }
       if (/^#{1,4}\s+/.test(l)) { res.push(<h4 key={k++}>{inline(l.replace(/^#{1,4}\s+/, ''), `h${k}`)}</h4>); i++; continue; }
       if (!l.trim()) { i++; continue; }
-      const buf: string[] = [];
-      while (i < lines.length && lines[i].trim() && !/^(```|\s*[-*•]\s+|\s*\d+[.)]\s+|#{1,4}\s+)/.test(lines[i])) buf.push(lines[i++]);
+      const buf: string[] = [lines[i++]];   // always consume the current line (a stray '|' line must not stall the parser)
+      while (i < lines.length && lines[i].trim() && !/^(```|\s*[-*•]\s+|\s*\d+[.)]\s+|#{1,4}\s+|\s*\|)/.test(lines[i])) buf.push(lines[i++]);
       res.push(<p key={k++}>{buf.map((t, j) => <Fragment key={j}>{j > 0 && <br />}{inline(t, `p${k}${j}`)}</Fragment>)}</p>);
     }
     return res;
@@ -72,6 +84,10 @@ function Markdown({ text }: { text: string }) {
 const time = (t: number) => new Date(t).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
 
 export default function CopilotPage() {
+  const toast = useToast();
+  const [chats, setChats] = useLocalList<Chat>('liveiq-copilot-chats', 30);
+  const chatId = useRef<string | null>(null);   // assigned on first save / new chat
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -105,6 +121,16 @@ export default function CopilotPage() {
   };
 
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Save the conversation once it settles (never mid-stream) so it survives reloads.
+  useEffect(() => {
+    if (busy || msgs.length === 0 || msgs.some(m => m.streaming)) return;
+    const first = msgs.find(m => m.role === 'user')?.content ?? 'New chat';
+    if (!chatId.current) chatId.current = `${Date.now()}`;
+    const entry: Chat = { id: chatId.current, title: first.slice(0, 60), updated: Date.now(), msgs: msgs.map(m => ({ id: m.id, role: m.role, content: m.content, ts: m.ts, error: m.error, sources: m.sources })) };
+    setChats([entry, ...chats.filter(c => c.id !== entry.id)]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgs, busy]);
 
   const patch = useCallback((id: number, p: Partial<Msg> | ((m: Msg) => Partial<Msg>)) =>
     setMsgs(list => list.map(m => m.id === id ? { ...m, ...(typeof p === 'function' ? p(m) : p) } : m)), []);
@@ -145,6 +171,7 @@ export default function CopilotPage() {
             try {
               const j = JSON.parse(data);
               if (j.error) { streamErr = String(j.error); done = true; break; }
+              if (Array.isArray(j.sources)) patch(aid, { sources: j.sources as string[] });
               if (j.chunk) { got += j.chunk; const snap = got; patch(aid, { content: snap }); }
             } catch { /* partial frame */ }
           }
@@ -185,7 +212,9 @@ export default function CopilotPage() {
     const idx = msgs.findIndex(m => m.id === lastUser.id);
     run(msgs.slice(0, idx + 1));
   };
-  const newChat = () => { abortRef.current?.abort(); setMsgs([]); setBusy(false); setInput(''); };
+  const newChat = () => { abortRef.current?.abort(); chatId.current = null; setMsgs([]); setBusy(false); setInput(''); };
+  const openChat = (c: Chat) => { abortRef.current?.abort(); chatId.current = c.id; setBusy(false); setMsgs(c.msgs); idRef.current = Math.max(idRef.current, ...c.msgs.map(m => m.id)); setHistoryOpen(false); };
+  const copy = async (t: string) => { try { await navigator.clipboard.writeText(t); toast('Copied', 'success'); } catch { toast('Couldn’t copy', 'error'); } };
 
   return (
     <Page title="AI Copilot" subtitle="Ask about artists, cities and pricing" fill>
@@ -208,7 +237,10 @@ export default function CopilotPage() {
               )}
             </AnimatePresence>
           </div>
-          <button type="button" className={styles.newChat} onClick={newChat} disabled={msgs.length === 0} aria-label="New chat"><SquarePen size={16} strokeWidth={1.7} /> New chat</button>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button" className={styles.newChat} onClick={() => setHistoryOpen(true)} aria-label="Chat history" disabled={chats.length === 0}><History size={16} strokeWidth={1.7} /> History</button>
+            <button type="button" className={styles.newChat} onClick={newChat} disabled={msgs.length === 0} aria-label="New chat"><SquarePen size={16} strokeWidth={1.7} /> New chat</button>
+          </div>
         </div>
 
         <div className={styles.scroll} ref={scrollRef} onScroll={onScroll}>
@@ -236,6 +268,15 @@ export default function CopilotPage() {
                           <>
                             {m.streaming && !m.content ? <span className={styles.dots} aria-label="Copilot is typing"><i /><i /><i /></span> : m.content ? <Markdown text={m.content} /> : null}
                             {m.streaming && m.content && <span className={styles.cursor} />}
+                            {!m.streaming && m.content && m.sources && m.sources.length > 0 && (
+                              <div className={styles.sources} data-testid="sources"><Database size={12} /> <span>Grounded in: {m.sources.join(' · ')}</span></div>
+                            )}
+                            {!m.streaming && m.content && !m.error && (
+                              <div className={styles.actions}>
+                                <button type="button" className={styles.act} onClick={() => copy(m.content)} aria-label="Copy answer"><Copy size={13} /> Copy</button>
+                                {!busy && idx === msgs.length - 1 && <button type="button" className={styles.act} onClick={retry} aria-label="Regenerate answer"><RotateCcw size={13} /> Regenerate</button>}
+                              </div>
+                            )}
                             {m.error && (
                               <div role="alert" style={{ color: 'var(--negative)', fontSize: '.875rem' }}>
                                 {m.error}
@@ -265,6 +306,21 @@ export default function CopilotPage() {
           <p className={styles.foot}>AI can make mistakes. Verify numbers before booking decisions.</p>
         </div>
       </div>
+      <Sheet open={historyOpen} onClose={() => setHistoryOpen(false)} title="Chat history">
+        {chats.length === 0 ? <p className="t-callout text-tertiary">No saved chats yet.</p> : (
+          <div data-testid="history-list">
+            {chats.map(c => (
+              <div key={c.id} className={styles.histRow}>
+                <button type="button" className={styles.histBtn} onClick={() => openChat(c)} data-testid="history-item">
+                  <span className={styles.histTitle}>{c.title}</span>
+                  <span className={styles.histSub}>{new Date(c.updated).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })} · {c.msgs.length} messages</span>
+                </button>
+                <button type="button" className="btn btn-icon" aria-label={`Delete ${c.title}`} onClick={() => setChats(chats.filter(x => x.id !== c.id))}><Trash2 size={15} strokeWidth={1.75} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Sheet>
     </Page>
   );
 }

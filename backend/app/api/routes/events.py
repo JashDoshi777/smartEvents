@@ -9,11 +9,12 @@ Endpoint:
 """
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from app.models.venue import Venue
 from app.models.event import Event
 from app.api.deps import require_roles, get_current_user
 from app.models.user import User, UserRole
+from app.services.city_lookup import resolve_city, escape_like
 
 try:
     from app.services.ml.pricing_engine import pricing_engine
@@ -105,14 +107,15 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
         raise HTTPException(400, "Provide either venue_id or venue_capacity")
 
     # ── Resolve city market score ────────────────────────────────────────────
-    city_result = await db.execute(select(City).where(City.name.ilike(f"%{request.city}%")))
-    city_obj = city_result.scalar_one_or_none()
+    city_obj = await resolve_city(db, request.city)
+    city_name = city_obj.name if city_obj else request.city.strip()
+    city_like = escape_like(city_name)
     city_music_score = city_obj.music_market_size if city_obj and city_obj.music_market_size is not None else 70.0
 
     # ── Latest composite score for this entity ──────────────────────────────
     metric_result = await db.execute(
         select(EntityMetric)
-        .where(EntityMetric.entity_id == entity_uid)
+        .where(EntityMetric.entity_id == entity_uid, EntityMetric.composite_score.isnot(None))
         .order_by(desc(EntityMetric.time))
         .limit(1)
     )
@@ -132,7 +135,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
     last_event_result = await db.execute(
         select(func.max(Event.event_date))
         .join(Venue, Event.venue_id == Venue.id)
-        .where(Venue.city.ilike(f"%{request.city}%"), Event.event_date < target_date)
+        .where(Venue.city.ilike(city_like, escape="\\"), Event.event_date < target_date)
     )
     last_event_date = last_event_result.scalar_one_or_none()
     if last_event_date is not None:
@@ -147,7 +150,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
         .select_from(Event)
         .join(Venue, Event.venue_id == Venue.id)
         .where(
-            Venue.city.ilike(f"%{request.city}%"),
+            Venue.city.ilike(city_like, escape="\\"),
             Event.event_date >= weekend_start,
             Event.event_date <= weekend_end,
         )
@@ -249,9 +252,11 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
             "margin_pct": margin_pct,
         }
 
-    conservative_fill = max(5, round(predicted_fill_pct * 0.7, 1))
-    expected_fill = predicted_fill_pct
-    optimistic_fill = min(99, round(predicted_fill_pct * 1.2, 1))
+    # Keep conservative <= expected <= optimistic even at the extremes (a 2% expected fill
+    # used to produce a 5% "conservative" case; a 99.5% one a 99% "optimistic" case).
+    expected_fill = max(0.0, min(100.0, predicted_fill_pct))
+    conservative_fill = min(expected_fill, max(5, round(expected_fill * 0.7, 1)))
+    optimistic_fill = max(expected_fill, min(99, round(expected_fill * 1.2, 1)))
 
     scenarios = {
         "conservative": _scenario(conservative_fill),
@@ -297,7 +302,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
         "venue": {
             "id": request.venue_id,
             "name": venue.name if venue else None,
-            "city": request.city,
+            "city": city_name,
             "capacity": capacity,
         },
         "inputs": {
@@ -324,6 +329,7 @@ async def _compute_deal_model(request: "DealModelRequest", db: AsyncSession) -> 
             "achievable": break_even_achievable,
         },
         "risk_level": risk_level,
+        "cost_model": {"venue_pct": VENUE_COST_PCT_OF_REVENUE, "ops_pct": OPS_COST_PCT_OF_REVENUE},
         "cost_model_note": COST_MODEL_NOTE,
         "market_context": {
             "predicthq": predicthq_context,
@@ -343,26 +349,116 @@ async def model_event_deal(
     return await _compute_deal_model(request, db)
 
 
+def _ist_day(d: str, end: bool = False):
+    """YYYY-MM-DD (an India calendar day) -> UTC instant of that day's start (or the next day's start)."""
+    try:
+        day = datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+    except ValueError:
+        raise HTTPException(422, f"Invalid date '{d}' — use YYYY-MM-DD")
+    return (day + timedelta(days=1)) if end else day
+
+
+def _event_filters(source, city, category, q, when, now, date_from=None, date_to=None):
+    conds = []
+    if date_from:
+        conds.append(Event.event_date >= _ist_day(date_from))
+    if date_to:
+        conds.append(Event.event_date < _ist_day(date_to, end=True))
+    if source:
+        conds.append(Event.source == source)
+    if category:
+        conds.append(Event.category == category)
+    if city:
+        conds.append(Venue.city.ilike(escape_like(city.replace("-", " ").strip()), escape="\\"))
+    if q and q.strip():
+        conds.append(Event.title.ilike(f"%{escape_like(q.strip())}%", escape="\\"))
+    # "upcoming" is derived from the date, not the stored status (which goes stale: rows
+    # synced as "upcoming" stay that way after the date passes).
+    if when == "upcoming":
+        conds.append(Event.event_date >= now)
+    elif when == "past":
+        conds.append(Event.event_date < now)
+    return conds
+
+
+@router.get("/summary", summary="Aggregates over ALL events (not just one page)")
+async def events_summary(
+    source: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    q: Optional[str] = None,
+    when: str = Query("all", pattern="^(all|upcoming|past)$"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    now = datetime.now(timezone.utc)
+    conds = _event_filters(source, city, category, q, when, now)
+    base = select(Event).outerjoin(Venue, Event.venue_id == Venue.id).where(*conds).subquery()
+
+    async def groups(col):
+        rows = (await db.execute(select(col, func.count()).select_from(base).group_by(col))).all()
+        return rows
+
+    total = await db.scalar(select(func.count()).select_from(base)) or 0
+    upcoming = await db.scalar(select(func.count()).select_from(base).where(base.c.event_date >= now)) or 0
+    within30 = await db.scalar(select(func.count()).select_from(base).where(base.c.event_date >= now, base.c.event_date < now + timedelta(days=30))) or 0
+    with_fill = await db.scalar(select(func.count()).select_from(base).where(base.c.fill_rate.isnot(None))) or 0
+    no_venue = await db.scalar(select(func.count()).select_from(base).where(base.c.venue_id.is_(None))) or 0
+    month_expr = func.to_char(func.timezone("Asia/Kolkata", base.c.event_date), "YYYY-MM")
+    by_month = (await db.execute(select(month_expr, func.count()).select_from(base).where(base.c.event_date.isnot(None)).group_by(month_expr).order_by(month_expr))).all()
+    by_category = await groups(base.c.category)
+    by_source = await groups(base.c.source)
+    by_city = (await db.execute(
+        select(Venue.city, func.count()).select_from(base).outerjoin(Venue, base.c.venue_id == Venue.id).group_by(Venue.city)
+    )).all()
+    # Facets for the filter UI are computed WITHOUT the filters so options never vanish.
+    fac_src = (await db.execute(select(Event.source, func.count()).group_by(Event.source))).all()
+    fac_cat = (await db.execute(select(Event.category, func.count()).group_by(Event.category))).all()
+    fac_city = (await db.execute(select(Venue.city, func.count()).select_from(Event).join(Venue, Event.venue_id == Venue.id).group_by(Venue.city))).all()
+
+    def d(rows):
+        return sorted(({"key": k, "count": n} for k, n in rows if k), key=lambda r: (-r["count"], r["key"]))
+
+    return {
+        "total": total, "upcoming": upcoming, "past": total - upcoming, "next_30_days": within30,
+        "with_fill_rate": with_fill, "without_venue": no_venue,
+        "by_month": [{"month": m, "count": n} for m, n in by_month],
+        "by_category": d(by_category), "by_source": d(by_source), "by_city": d(by_city),
+        "facets": {"sources": d(fac_src), "categories": d(fac_cat), "cities": d(fac_city)},
+        "timezone": "Asia/Kolkata",
+        "as_of": now.isoformat(),
+    }
+
+
 @router.get("", summary="List events (upcoming first), with city/venue when known")
 async def list_events(
     limit: int = 100,
     offset: int = 0,
     source: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    q: Optional[str] = Query(None, max_length=120),
+    when: str = Query("all", pattern="^(all|upcoming|past)$"),
+    date_from: Optional[str] = Query(None, description="IST day, YYYY-MM-DD (inclusive)"),
+    date_to: Optional[str] = Query(None, description="IST day, YYYY-MM-DD (inclusive)"),
+    order: str = Query("asc", pattern="^(asc|desc)$"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     limit = max(1, min(limit, 500))
-    q = (
+    now = datetime.now(timezone.utc)
+    conds = _event_filters(source, city, category, q, when, now, date_from, date_to)
+    sort = Event.event_date.asc().nullslast() if order == "asc" else Event.event_date.desc().nullslast()
+    qry = (
         select(Event, Venue.name, Venue.city)
         .outerjoin(Venue, Event.venue_id == Venue.id)
-        .order_by(Event.event_date.asc())
+        .where(*conds)
+        .order_by(sort, Event.id.asc())
         .limit(limit)
         .offset(max(offset, 0))
     )
-    if source:
-        q = q.where(Event.source == source)
-    rows = (await db.execute(q)).all()
-    total = await db.scalar(select(func.count(Event.id)).where(Event.source == source) if source else select(func.count(Event.id))) or 0
+    rows = (await db.execute(qry)).all()
+    total = await db.scalar(select(func.count()).select_from(Event).outerjoin(Venue, Event.venue_id == Venue.id).where(*conds)) or 0
     return {
         "total": total,
         "events": [
@@ -372,6 +468,7 @@ async def list_events(
                 "category": e.category,
                 "source": e.source,
                 "status": e.status,
+                "is_upcoming": bool(e.event_date and e.event_date >= now),
                 "event_date": e.event_date.isoformat() if e.event_date else None,
                 "venue": vname,
                 "city": vcity,

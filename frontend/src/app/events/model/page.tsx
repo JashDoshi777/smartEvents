@@ -2,22 +2,24 @@
 
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import { AnimatePresence, motion } from 'framer-motion';
-import { Lock, TrendingUp, Loader2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Bookmark, Download, Lock, Printer, TrendingUp, Loader2, Trash2 } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/States';
-import { EntityPicker, CityPicker, FormGroup, FormRow, FormHint } from '@/components/intel/Pickers';
+import { EntityPicker, CityPicker, FormGroup, FormRow } from '@/components/intel/Pickers';
 import { CountUp } from '@/components/intel/CountUp';
 import { Ring } from '@/components/intel/Ring';
 import { getCityVenues, getMe, modelEventDeal, type DealModelResponse } from '@/lib/api';
+import { useToast } from '@/components/ui/Toast';
+import { useLocalList } from '@/lib/useLocalList';
 import { inr, inrCompact, num } from '@/lib/format';
 import styles from './page.module.css';
 
 const ALLOWED = ['executive', 'analyst', 'booker'];
-const riskStyle = (_r: string) => ({ color: 'var(--text-secondary)' });
+const riskStyle = () => ({ color: 'var(--text-secondary)' });
 const riskDot = (r: string) => r === 'Low' ? 'var(--positive)' : r === 'Medium' ? 'var(--warning)' : 'var(--negative)';
 
 function Tip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
@@ -30,7 +32,14 @@ function Tip({ active, payload, label }: { active?: boolean; payload?: { name: s
   );
 }
 
+type Saved = { id: string; name: string; entityId: string; entityName: string; city: string; venueId: string; capacity: string; price: string; lead: string; net: number; margin: number | null; fill: number; savedAt: number };
+const FILLS = [30, 45, 60, 75, 90, 100];
+const csvCell = (v: unknown) => { const t = v == null ? '' : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+
 export default function DealModelerPage() {
+  const toast = useToast();
+  const [saved, setSaved] = useLocalList<Saved>('liveiq-deal-scenarios', 12);
+  const [entityName, setEntityName] = useState('');
   const [entityId, setEntityId] = useState('');
   const [city, setCity] = useState('');
   const [venueId, setVenueId] = useState('');
@@ -46,7 +55,6 @@ export default function DealModelerPage() {
   const roleBlocked = forbidden || (me ? !ALLOWED.includes(me.role?.toLowerCase()) : false);
   const { data: venuesData } = useSWR(city ? `venues/${city}` : null, () => getCityVenues(city));
   const venues = useMemo(() => (venuesData?.venues ?? []).filter((v): v is typeof v & { id: string } => !!v.id), [venuesData]);
-  const venue = venues.find(v => v.id === venueId);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -81,6 +89,44 @@ export default function DealModelerPage() {
   const costParts = ex ? [['Artist', ex.artist_fee, .85], ['Venue', ex.venue_cost, .5], ['Operations', ex.ops_cost, .22]] as const : [];
   const costTotal = ex?.total_cost || 1;
 
+  // Sensitivity: net profit for a price x fill grid. Pure arithmetic on the response's own cost model.
+  const cm = res?.cost_model ?? { venue_pct: .1, ops_pct: .25 };
+  const grid = useMemo(() => {
+    if (!res) return null;
+    const base = res.inputs.ticket_price;
+    const prices = [...new Set([.6, .8, 1, 1.25, 1.5].map(m => Math.min(50000, Math.max(100, Math.round(base * m / 50) * 50))))].sort((a, b) => a - b);
+    const fills = [...new Set([...FILLS, Math.round(res.prediction.predicted_fill_rate_pct)])].sort((a, b) => a - b);
+    const cells = prices.map(pr => fills.map(f => Math.round(res.venue.capacity * (f / 100) * pr * (1 - cm.venue_pct - cm.ops_pct) - res.artist_fee.amount)));
+    return { prices, fills, cells, base };
+  }, [res, cm.venue_pct, cm.ops_pct]);
+
+  function save() {
+    if (!res || !ex) return;
+    const entry: Saved = { id: `${Date.now()}`, name: `${res.entity.name} · ${res.venue.city} · ${inr(res.inputs.ticket_price)}`, entityId: res.entity.id, entityName: entityName || res.entity.name, city, venueId, capacity, price, lead, net: ex.net_profit, margin: ex.margin_pct, fill: res.prediction.predicted_fill_rate_pct, savedAt: Date.now() };
+    setSaved([entry, ...saved]);
+    toast('Scenario saved', 'success');
+  }
+  function load(sv: Saved) {
+    setEntityId(sv.entityId); setEntityName(sv.entityName); setCity(sv.city); setVenueId(sv.venueId); setCapacity(sv.capacity); setPrice(sv.price); setLead(sv.lead);
+    toast('Inputs restored. Run the simulation to refresh.', 'success');
+  }
+  function exportCsv() {
+    if (!res) return;
+    const rows: unknown[][] = [
+      ['LiveIQ deal model', ''], ['Artist', res.entity.name], ['City', res.venue.city], ['Venue', res.venue.name ?? 'Capacity entered manually'], ['Capacity', res.venue.capacity],
+      ['Ticket price (INR)', res.inputs.ticket_price], ['Lead days', res.inputs.lead_days], ['Predicted fill (%)', res.prediction.predicted_fill_rate_pct], ['Artist fee (INR)', res.artist_fee.amount],
+      ['Break-even tickets', res.break_even.tickets ?? ''], ['Break-even fill (%)', res.break_even.fill_rate_pct ?? ''], ['Risk', res.risk_level], [],
+      ['Scenario', 'Fill %', 'Attendance', 'Gross revenue', 'Artist fee', 'Venue cost', 'Ops cost', 'Total cost', 'Net profit', 'Margin %'],
+      ...(['conservative', 'expected', 'optimistic'] as const).map(k => { const x = res.scenarios[k]; return [k, x.fill_rate_pct, x.attendance, x.gross_revenue, x.artist_fee, x.venue_cost, x.ops_cost, x.total_cost, x.net_profit, x.margin_pct ?? '']; }),
+      [], ['Net profit (INR) by price and fill'], ['Price \\ Fill %', ...(grid?.fills ?? [])],
+      ...(grid ? grid.prices.map((pr, i) => [pr, ...grid.cells[i]]) : []), [], ['Note', res.cost_model_note],
+    ];
+    const blob = new Blob([rows.map(r => r.map(csvCell).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob); const a = document.createElement('a');
+    a.href = url; a.download = `deal-model-${res.entity.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.csv`; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return (
     <Page title="Deal Modeler" subtitle="Simulate revenue, cost and break-even before you book">
       <div className={styles.layout}>
@@ -92,7 +138,7 @@ export default function DealModelerPage() {
             </div>
           )}
           <FormGroup title="The act">
-            <FormRow label="Artist" htmlFor="m-artist"><EntityPicker id="m-artist" value={entityId} onChange={id => setEntityId(id)} placeholder="Choose" /></FormRow>
+            <FormRow label="Artist" htmlFor="m-artist"><EntityPicker id="m-artist" value={entityId} onChange={(id, e) => { setEntityId(id); setEntityName(e?.name ?? ''); }} placeholder="Choose" /></FormRow>
             <FormRow label="City" htmlFor="m-city"><CityPicker id="m-city" value={city} onChange={c => { setCity(c); setVenueId(''); }} /></FormRow>
             <FormRow label="Venue" htmlFor="m-venue">
               <select id="m-venue" className="input" value={venueId} onChange={e => setVenueId(e.target.value)} disabled={!city || venues.length === 0}>
@@ -107,6 +153,21 @@ export default function DealModelerPage() {
             <FormRow label="Lead time" htmlFor="m-lead"><input id="m-lead" className="input tnum" style={{ width: '4ch', flex: '0 0 auto', textAlign: 'left' }} inputMode="numeric" value={lead} onChange={e => setLead(e.target.value.replace(/\D/g, ''))} /><span style={{ color: 'var(--text-secondary)', width: 'auto', marginLeft: 6 }}>days</span></FormRow>
           </FormGroup>
           {err && <div className={styles.err} role="alert">{err}</div>}
+          {saved.length > 0 && (
+            <FormGroup title="Saved scenarios">
+              <div data-testid="saved-list">
+                {saved.map(sv => (
+                  <div key={sv.id} className={styles.savedRow}>
+                    <button type="button" className={styles.savedBtn} onClick={() => load(sv)} data-testid="saved-item">
+                      <span className={styles.savedName}>{sv.name}</span>
+                      <span className={styles.savedSub} style={{ color: sv.net >= 0 ? 'var(--positive)' : 'var(--negative)' }}>{inrCompact(sv.net)} net · {sv.fill}% fill</span>
+                    </button>
+                    <button type="button" className="btn btn-icon" aria-label={`Delete ${sv.name}`} onClick={() => setSaved(saved.filter(x => x.id !== sv.id))}><Trash2 size={15} strokeWidth={1.75} /></button>
+                  </div>
+                ))}
+              </div>
+            </FormGroup>
+          )}
           <button type="submit" className="btn btn-primary" disabled={busy || roleBlocked} style={{ minHeight: 50, fontSize: '1rem' }}>
             {busy ? <><Loader2 size={16} className="spin" /> Simulating…</> : 'Run simulation'}
           </button>
@@ -124,7 +185,7 @@ export default function DealModelerPage() {
               <GlassCard className={`${styles.hero} ${styles.s8}`}>
                 <div className={styles.heroTop}>
                   <h2 className={styles.title}>{res.entity.name} at {res.venue.name ?? res.venue.city}</h2>
-                  <span className={styles.risk} style={riskStyle(res.risk_level)}><i className={styles.dot} style={{ background: riskDot(res.risk_level), marginRight: 6, alignSelf: 'center' }} />{res.risk_level} risk</span>
+                  <span className={styles.risk} style={riskStyle()}><i className={styles.dot} style={{ background: riskDot(res.risk_level), marginRight: 6, alignSelf: 'center' }} />{res.risk_level} risk</span>
                 </div>
                 <div className={styles.big} style={{ color: tone(ex?.net_profit ?? 0) }}>{ex ? <CountUp value={ex.net_profit} format={v => inrCompact(v)} /> : '—'}</div>
                 <div className={styles.bigSub}>expected net profit · {ex?.margin_pct != null ? `${ex.margin_pct}% margin` : '—'}</div>
@@ -181,6 +242,27 @@ export default function DealModelerPage() {
                   );
                 })}
               </GlassCard>
+              <GlassCard className={`${styles.pad} ${styles.s12}`} delay={.17}>
+                <div className={styles.head}><h2 className={styles.title}>Net profit by price and fill</h2><span className="t-footnote text-tertiary">{res.venue.capacity.toLocaleString('en-IN')} seats, artist fee {inrCompact(res.artist_fee.amount)}</span></div>
+                {grid && (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="table" data-testid="sens-table" style={{ minWidth: 520 }}>
+                      <thead><tr><th>Ticket price</th>{grid.fills.map(f => <th key={f} className="tnum" style={{ textAlign: 'right' }}>{f}% fill</th>)}</tr></thead>
+                      <tbody>{grid.prices.map((pr, i) => (
+                        <tr key={pr} style={pr === grid.base ? { background: 'var(--fill-quaternary)' } : undefined}>
+                          <td className="tnum" style={{ fontWeight: pr === grid.base ? 700 : 500 }}>{inr(pr)}</td>
+                          {grid.cells[i].map((v, j) => <td key={grid.fills[j]} className="tnum" data-testid={`cell-${pr}-${grid.fills[j]}`} style={{ textAlign: 'right', color: tone(v) }}>{inrCompact(v)}</td>)}
+                        </tr>))}</tbody>
+                    </table>
+                  </div>
+                )}
+                <p className={styles.note} style={{ marginTop: 8 }}>Each cell is attendance x price x {Math.round((1 - cm.venue_pct - cm.ops_pct) * 100)}% retained after venue and operations costs, minus the artist fee. Fill is a what-if here, independent of the model prediction.</p>
+              </GlassCard>
+              <div className={`${styles.actionsRow} ${styles.s12}`}>
+                <button type="button" className="btn btn-tinted" onClick={save} data-testid="save-scenario"><Bookmark size={15} strokeWidth={1.75} /> Save scenario</button>
+                <button type="button" className="btn btn-tinted" onClick={exportCsv} data-testid="export-csv"><Download size={15} strokeWidth={1.75} /> Export CSV</button>
+                <button type="button" className="btn btn-tinted" onClick={() => window.print()}><Printer size={15} strokeWidth={1.75} /> Print or save PDF</button>
+              </div>
               <p className={`${styles.note} ${styles.s12}`}>
                 Model {res.prediction.model}, confidence {res.prediction.confidence_pct}%{res.prediction.model_data_source ? `, ${res.prediction.model_data_source}` : ''}. {res.cost_model_note}
                 {res.market_context?.predicthq?.comparable_events_found > 0 && <> PredictHQ found {res.market_context.predicthq.comparable_events_found} comparable events nearby{res.market_context.predicthq.avg_predicted_attendance != null ? ` (avg predicted attendance ${num(Math.round(res.market_context.predicthq.avg_predicted_attendance))})` : ''}.</>}

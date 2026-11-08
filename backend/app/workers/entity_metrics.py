@@ -187,44 +187,11 @@ async def _process_single_entity(entity: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _compute_composite_score(metrics: Dict[str, Any]) -> Optional[float]:
-    """
-    Weighted composite score 0-100 from available signals.
-    Weights: Last.fm 30% | YouTube 25% | Google Trends 25% | News 20%
-    Normalised relative to rough expected maximums.
-    """
-    score = 0.0
-    weight_sum = 0.0
-
-    # Last.fm listeners (normalised to ~10M max)
-    listeners = metrics.get("lastfm_listeners")
-    if listeners is not None:
-        norm = min(listeners / 10_000_000, 1.0) * 100
-        score += norm * 0.30
-        weight_sum += 0.30
-
-    # YouTube subscribers (normalised to ~50M max)
-    subs = metrics.get("youtube_subscribers")
-    if subs is not None:
-        norm = min(subs / 50_000_000, 1.0) * 100
-        score += norm * 0.25
-        weight_sum += 0.25
-
-    # Google Trends (already 0-100)
-    trend_score = metrics.get("google_trend_score")
-    if trend_score is not None:
-        score += float(trend_score) * 0.25
-        weight_sum += 0.25
-
-    # News mentions (normalised to 200 articles max)
-    news = metrics.get("news_mentions_7d")
-    if news is not None:
-        norm = min(news / 200, 1.0) * 100
-        score += norm * 0.20
-        weight_sum += 0.20
-
-    if weight_sum == 0:
-        return None
-    return round(score / weight_sum, 2)
+    """Composite 0-100 score. Delegates to the pure, tested v2 formula in
+    app/services/scoring/composite.py (log-scaled counts, weights renormalised
+    over the signals that are present)."""
+    from app.services.scoring.composite import compute_composite_score
+    return compute_composite_score(metrics)
 
 
 def _compute_trend_direction(metrics: Dict[str, Any]) -> str:

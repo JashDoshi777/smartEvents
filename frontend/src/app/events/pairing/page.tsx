@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import useSWR from 'swr';
 import { motion } from 'framer-motion';
 import { Loader2, Users2 } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
@@ -11,7 +12,7 @@ import { Segmented } from '@/components/ui/Controls';
 import { EntityPicker, CityPicker, FormGroup, FormRow, FormHint } from '@/components/intel/Pickers';
 import { CountUp } from '@/components/intel/CountUp';
 import { Ring } from '@/components/intel/Ring';
-import { recommendPairs, type PairRecommendResponse } from '@/lib/api';
+import { recommendPairs, type PairRecommendRequest } from '@/lib/api';
 import { inrCompact, num } from '@/lib/format';
 import styles from './page.module.css';
 
@@ -22,31 +23,24 @@ export default function PairingPage() {
   const [anchor, setAnchor] = useState('');
   const [budget, setBudget] = useState('');
   const [market, setMarket] = useState<Market>('india');
-  const [res, setRes] = useState<PairRecommendResponse | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
   const [formErr, setFormErr] = useState<string | null>(null);
-  const seq = useRef(0);
+  // The request that was last submitted. SWR owns loading / error / caching, and a new
+  // submission supersedes any in-flight one, so a slow earlier response can't overwrite a newer one.
+  const [req, setReq] = useState<PairRecommendRequest>({ city: 'Mumbai', market: 'India', limit: 10 });
+  const { data: res, error, isLoading, isValidating, mutate } = useSWR(['pairing', JSON.stringify(req)], () => recommendPairs(req), { shouldRetryOnError: false, revalidateOnFocus: false, keepPreviousData: true });
+  const busy = isLoading || isValidating;
 
-  const run = useCallback(async () => {
+  function run() {
     if (!city) return setFormErr('Choose a city to build the bill for.');
-    setFormErr(null); setErr(null); setBusy(true);
-    const my = ++seq.current;
-    try {
-      const out = await recommendPairs({ city, budget: budget ? Number(budget) : undefined, anchor_entity_id: anchor || undefined, market: market === 'india' ? 'India' : undefined, limit: 10 });
-      if (my === seq.current) setRes(out);
-    } catch (x) {
-      if (my !== seq.current) return;
-      const m = x instanceof Error ? x.message : '';
-      setRes(null);
-      setErr(/API 404/.test(m) ? 'That artist has no live metrics yet, so we can’t pair them. Pick another anchor.'
-        : /API 400/.test(m) ? 'Not enough artists with live data to form pairings for this filter. Try “All markets”.'
-        : 'Pairing service is unavailable right now. Please retry.');
-    } finally { if (my === seq.current) setBusy(false); }
-  }, [city, budget, anchor, market]);
-
-  useEffect(() => { run(); /* initial suggestion run */ // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    setFormErr(null);
+    const next: PairRecommendRequest = { city, budget: budget ? Number(budget) : undefined, anchor_entity_id: anchor || undefined, market: market === 'india' ? 'India' : undefined, limit: 10 };
+    if (JSON.stringify(next) === JSON.stringify(req)) void mutate(); else setReq(next);
+  }
+  const m = error instanceof Error ? error.message : '';
+  const err = !error ? null
+    : /API 404/.test(m) ? 'That artist has no live metrics yet, so we can’t pair them. Pick another anchor.'
+    : /API 400/.test(m) ? 'Not enough artists with live data to form pairings for this filter. Try “All markets”.'
+    : 'Pairing service is unavailable right now. Please retry.';
 
   const [top, ...rest] = res?.recommendations ?? [];
   return (
@@ -70,7 +64,7 @@ export default function PairingPage() {
           {busy && !res ? (
             <><Skeleton height={190} radius={26} />{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} height={64} radius={18} />)}</>
           ) : err ? (
-            <GlassCard><ErrorState message={err} onRetry={run} /></GlassCard>
+            <GlassCard><ErrorState message={err} onRetry={() => mutate()} /></GlassCard>
           ) : !res ? (
             <GlassCard className={styles.empty}><EmptyState icon={<Users2 size={36} strokeWidth={1.4} />} title="No pairings yet" message="Choose a city and press Find pairings." /></GlassCard>
           ) : !top ? (
@@ -83,7 +77,7 @@ export default function PairingPage() {
                   <div className={styles.fNames}><span>{top.entity_a.name}</span><span className={styles.amp}>&amp;</span><span>{top.entity_b.name}</span></div>
                   <div className={styles.sub}>{[top.entity_a.category, top.entity_b.category].filter((c, k, a) => c && a.indexOf(c) === k).join(' · ') || '—'}</div>
                   {top.shared_genres.length > 0 && <div className={styles.genres}>{top.shared_genres.slice(0, 5).map(g => <span key={g} className={styles.genre}>{g}</span>)}</div>}
-                  <div className={styles.fee}>{top.combined_booking_fee_estimate != null ? <><b>{inrCompact(top.combined_booking_fee_estimate)}</b> combined fee</> : 'Booking fee not on file'}</div>
+                  <div className={styles.fee}>{top.combined_booking_fee_estimate != null ? <><b>{inrCompact(top.combined_booking_fee_estimate)}</b> combined fee{top.fee_complete === false ? ' (one artist has no fee on file)' : ''}</> : 'Booking fee not on file'}</div>
                 </div>
                 <Ring value={top.similarity_score} size={112} stroke={11}><div><div className={styles.ringNum}><CountUp value={top.similarity_score} /></div><div className={styles.ringLbl}>match</div></div></Ring>
               </GlassCard>
@@ -95,7 +89,7 @@ export default function PairingPage() {
                       <span className={styles.rank}>{i + 2}</span>
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div className={styles.names}>{p.entity_a.name} <span className={styles.amp}>&amp;</span> {p.entity_b.name}</div>
-                        <div className={styles.sub}>{p.shared_genres.slice(0, 3).join(', ') || 'No shared genre tags'}{p.combined_booking_fee_estimate != null ? ` · ${inrCompact(p.combined_booking_fee_estimate)}` : ''}</div>
+                        <div className={styles.sub}>{p.shared_genres.slice(0, 3).join(', ') || 'No shared genre tags'}{p.combined_booking_fee_estimate != null ? ` · ${inrCompact(p.combined_booking_fee_estimate)}${p.fee_complete === false ? ' (partial)' : ''}` : ''}</div>
                       </div>
                       <span className={styles.score}>{Math.round(p.similarity_score)}</span>
                     </motion.div>

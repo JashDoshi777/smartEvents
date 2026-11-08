@@ -123,6 +123,9 @@ class Event(Base):
 
     # Metadata
     tags = Column(ARRAY(String), default=[])
+    # Raw location evidence from the source (not a FK): lets venue/city linking be audited & re-run
+    city = Column(String(100), index=True)
+    venue_name_raw = Column(String(255))
     scraped_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow)
     updated_at = Column(TIMESTAMP(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -14,14 +14,18 @@ import structlog
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy import select, func, desc
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, run_queries
 from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.models.city import City
 from app.core.config import settings
 from app.services.latest_metric import latest_metric
+from app.services.market_scope import Market, market_clause
+from app.services.portfolio import stats_dict, stats_stmt, health_label
+from app.services.market_scope import market_clause
 from app.api.deps import get_current_user, require_roles
 from app.models.user import User, UserRole
 
@@ -29,102 +33,57 @@ router = APIRouter()
 logger = structlog.get_logger()
 
 
-@router.get("/kpis", summary="Real-time executive KPI dashboard")
-async def get_kpis(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    """
-    Returns real-time aggregated KPIs from NeonDB:
-    - Entity portfolio health
-    - Top performing entities
-    - City coverage
-    - Market signal summary
-    """
-    # Total entities
-    total_entities = await db.scalar(select(func.count(Entity.id)))
-
-    # Entities with metrics
-    entities_with_metrics = await db.scalar(
-        select(func.count(func.distinct(EntityMetric.entity_id)))
-    )
-
-    # Average composite score (latest metric per entity)
-    _latest = latest_metric()
-    avg_score_result = await db.execute(
-        select(func.avg(_latest.composite_score)).where(
-            _latest.composite_score.isnot(None)
-        )
-    )
-    avg_composite_score = avg_score_result.scalar()
-
-    # Entities by type
-    type_counts_result = await db.execute(
+async def _kpis_payload(market: str) -> dict:
+    lm = latest_metric()
+    scope = market_clause(market)
+    by_type_stmt = (
         select(Entity.entity_type, func.count(Entity.id).label("count"))
-        .group_by(Entity.entity_type)
-        .order_by(desc("count"))
+        .where(scope).group_by(Entity.entity_type).order_by(desc("count"), Entity.entity_type)
     )
-    entities_by_type = {row[0]: row[1] for row in type_counts_result.all()}
-
-    # Entities by category
-    category_counts_result = await db.execute(
+    categories_stmt = (
         select(Entity.category, func.count(Entity.id).label("count"))
-        .where(Entity.category.isnot(None))
-        .group_by(Entity.category)
-        .order_by(desc("count"))
-        .limit(8)
+        .where(Entity.category.isnot(None), scope)
+        .group_by(Entity.category).order_by(desc("count"), Entity.category).limit(8)
     )
-    top_categories = [{"category": r[0], "count": r[1]} for r in category_counts_result.all()]
-
-    # Top 5 entities by composite score
-    top_entities_result = await db.execute(
-        select(Entity.name, Entity.entity_type, Entity.category, EntityMetric.composite_score,
-               EntityMetric.google_trend_score, EntityMetric.news_mentions_7d)
-        .join(EntityMetric, Entity.id == EntityMetric.entity_id)
-        .where(EntityMetric.composite_score.isnot(None))
-        .order_by(desc(EntityMetric.composite_score))
+    top_stmt = (
+        select(Entity.name, Entity.entity_type, Entity.category, lm.composite_score,
+               lm.google_trend_score, lm.news_mentions_7d, lm.data_completeness)
+        .join(lm, Entity.id == lm.entity_id)
+        .where(scope)
+        .order_by(desc(lm.composite_score), Entity.name)
         .limit(5)
     )
-    top_entities = [
-        {
-            "name": r[0],
-            "type": r[1],
-            "category": r[2],
-            "composite_score": round(r[3], 1),
-            "google_trend": r[4],
-            "news_mentions_7d": r[5],
-        }
-        for r in top_entities_result.all()
-    ]
+    cities_stmt = select(func.count(City.id), func.count(City.id).filter(City.active_on_district.is_(True)))
 
-    # City coverage
-    total_cities = await db.scalar(select(func.count(City.id)))
-    active_cities = await db.scalar(
-        select(func.count(City.id)).where(City.active_on_district == True)  # noqa: E712
+    stats_rows, type_rows, cat_rows, top_rows, city_rows = await run_queries(
+        stats_stmt(market), by_type_stmt, categories_stmt, top_stmt, cities_stmt
     )
-
-    # International vs Indian entities
-    intl_count = await db.scalar(
-        select(func.count(Entity.id)).where(Entity.is_international == True)  # noqa: E712
-    )
-    indian_count = await db.scalar(
-        select(func.count(Entity.id)).where(Entity.is_international == False)  # noqa: E712
-    )
+    stats = stats_dict(stats_rows[0])
+    total_cities, active_cities = (city_rows[0][0] or 0), (city_rows[0][1] or 0)
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "market": market,
         "entity_portfolio": {
-            "total_tracked": total_entities or 0,
-            "with_live_metrics": entities_with_metrics or 0,
-            "metrics_coverage_pct": round((entities_with_metrics or 0) / max(total_entities or 1, 1) * 100, 1),
-            "avg_composite_score": round(avg_composite_score, 1) if avg_composite_score else None,
-            "by_type": entities_by_type,
-            "top_categories": top_categories,
-            "international": intl_count or 0,
-            "indian": indian_count or 0,
+            "total_tracked": stats["total"],
+            "with_live_metrics": stats["scored"],
+            "metrics_coverage_pct": stats["coverage_pct"],
+            "avg_composite_score": stats["avg_score"],
+            "by_type": {r[0]: r[1] for r in type_rows},
+            "top_categories": [{"category": r[0], "count": r[1]} for r in cat_rows],
+            "international": stats["international"],
+            "indian": stats["domestic"],
         },
-        "top_entities": top_entities,
+        "top_entities": [
+            {"name": r[0], "type": r[1], "category": r[2],
+             "composite_score": round(float(r[3]), 1), "google_trend": r[4],
+             "news_mentions_7d": r[5], "data_completeness": r[6]}
+            for r in top_rows
+        ],
         "city_coverage": {
-            "total_tracked": total_cities or 0,
-            "active_on_district": active_cities or 0,
-            "expansion_opportunities": (total_cities or 0) - (active_cities or 0),
+            "total_tracked": total_cities,
+            "active_on_district": active_cities,
+            "expansion_opportunities": total_cities - active_cities,
         },
         "data_freshness": {
             "last_metric_collection": "Celery worker runs every 6 hours",
@@ -133,56 +92,47 @@ async def get_kpis(db: AsyncSession = Depends(get_db), user: User = Depends(get_
     }
 
 
-@router.get("/briefing", summary="AI-generated executive briefing (Groq)")
-async def get_executive_briefing(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+@router.get("/kpis", summary="Real-time executive KPI dashboard")
+async def get_kpis(market: Market = "all", user: User = Depends(get_current_user)):
     """
-    Generates a natural language executive briefing using Groq Llama 3.3 70B.
-    Pulls top entities + city data from DB and synthesizes into a District-style memo.
+    Aggregated KPIs (identical definitions to /dashboard/summary hero and
+    /executive/portfolio - see app/services/portfolio.py): portfolio health,
+    top performers, city coverage. `market` scopes all entity figures.
     """
-    # Pull context data from DB
-    top_result = await db.execute(
-        select(Entity.name, Entity.entity_type, Entity.category, EntityMetric.composite_score,
-               EntityMetric.google_trend_score, EntityMetric.news_mentions_7d, EntityMetric.lastfm_listeners)
-        .join(EntityMetric, Entity.id == EntityMetric.entity_id)
-        .where(EntityMetric.composite_score.isnot(None))
-        .order_by(desc(EntityMetric.composite_score))
-        .limit(5)
-    )
-    top_entities = top_result.all()
+    return await _kpis_payload(market)
 
-    cities_result = await db.execute(
+
+async def _briefing_payload(market: str) -> dict:
+    lm = latest_metric()
+    scope = market_clause(market)
+    top_stmt = (
+        select(Entity.name, Entity.entity_type, Entity.category, lm.composite_score,
+               lm.google_trend_score, lm.news_mentions_7d, lm.lastfm_listeners)
+        .join(lm, Entity.id == lm.entity_id).where(scope)
+        .order_by(desc(lm.composite_score), Entity.name).limit(5)
+    )
+    cities_stmt = (
         select(City.name, City.tier, City.music_market_size, City.active_on_district)
-        .where(City.active_on_district == True)  # noqa: E712
-        .order_by(City.music_market_size.desc())
-        .limit(4)
+        .where(City.active_on_district.is_(True))
+        .order_by(City.music_market_size.desc().nullslast(), City.name).limit(4)
     )
-    active_cities = cities_result.all()
+    stats_rows, top_entities, active_cities = await run_queries(stats_stmt(market), top_stmt, cities_stmt)
+    stats = stats_dict(stats_rows[0])
 
-    total_entities = await db.scalar(select(func.count(Entity.id)))
-    entities_with_metrics = await db.scalar(
-        select(func.count(func.distinct(EntityMetric.entity_id)))
-    )
-
-    # Build context for AI
-    entity_lines = "\n".join([
-        f"- {r[0]} ({r[2] or r[1]}): composite_score={round(r[3], 1)}, "
-        f"google_trend={r[4]}, news_7d={r[5]}, lfm_listeners={r[6]:,}" if r[6] else
+    entity_lines = "\n".join(
         f"- {r[0]} ({r[2] or r[1]}): composite_score={round(r[3], 1)}, google_trend={r[4]}, news_7d={r[5]}"
+        + (f", lfm_listeners={r[6]:,}" if r[6] else "")
         for r in top_entities
-    ])
-    city_lines = "\n".join([
-        f"- {r[0]} (Tier {r[1]}): music_market_score={r[2]}, active_on_district={r[3]}"
-        for r in active_cities
-    ])
+    )
+    city_lines = "\n".join(
+        f"- {r[0]} (Tier {r[1]}): music_market_score={r[2]}, active_on_district={r[3]}" for r in active_cities
+    )
 
     prompt = f"""You are the LiveIQ intelligence system for District by Zomato, a premium live events platform in India.
 
 Generate a concise executive briefing (3-4 short paragraphs) for the District leadership team based on the following real-time data:
 
-ENTITY PORTFOLIO ({total_entities} total, {entities_with_metrics} with live metrics):
+ENTITY PORTFOLIO ({stats['total']} total, {stats['scored']} with live metrics):
 {entity_lines if entity_lines else "No metric data yet — worker collecting now."}
 
 ACTIVE MARKETS:
@@ -196,19 +146,21 @@ Instructions:
 - Start with: "LiveIQ Weekly Pulse —"
 """
 
+    degraded = False
     try:
         from app.services.groq_service import chat_completion
         briefing = await chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
-            temperature=0.4,
+            messages=[{"role": "user", "content": prompt}], max_tokens=300, temperature=0.4,
         )
     except Exception as e:
-        logger.error("Groq briefing failed", error=str(e))
+        logger.error("Groq briefing failed", error=type(e).__name__)
+        degraded = True
         briefing = "AI briefing temporarily unavailable. Check Groq API key configuration."
 
     return {
         "briefing": briefing,
+        "degraded": degraded,
+        "market": market,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "data_context": {
             "entities_analyzed": len(top_entities),
@@ -218,73 +170,59 @@ Instructions:
     }
 
 
+@router.get("/briefing", summary="AI-generated executive briefing (Groq)")
+async def get_executive_briefing(market: Market = "all", user: User = Depends(get_current_user)):
+    """Natural-language executive briefing synthesised from live DB data (Groq LLM)."""
+    return await _briefing_payload(market)
+
+
 @router.get("/portfolio", summary="Full entity portfolio health snapshot")
 async def get_portfolio(
-    entity_type: Optional[str] = Query(None),
-    db: AsyncSession = Depends(get_db),
+    entity_type: Optional[str] = Query(None, max_length=50),
+    market: Market = "all",
+    limit: int = Query(1000, ge=1, le=2000),
+    offset: int = Query(0, ge=0, le=100000),
     user: User = Depends(get_current_user),
 ):
-    """Returns the full entity portfolio ranked by composite score with health indicators."""
+    """Entity portfolio ranked by latest composite score (unscored entities last), one row per entity."""
+    lm = latest_metric()
     stmt = (
-        select(Entity, EntityMetric)
-        .outerjoin(EntityMetric, Entity.id == EntityMetric.entity_id)
-        .order_by(EntityMetric.composite_score.desc().nullslast(), Entity.name.asc())
+        select(Entity.id, Entity.name, Entity.entity_type, Entity.category, Entity.country,
+               Entity.is_international, lm.composite_score, lm.google_trend_score,
+               lm.news_mentions_7d, lm.time, lm.data_completeness, Entity.primary_market)
+        .outerjoin(lm, Entity.id == lm.entity_id)
+        .where(market_clause(market))
+        .order_by(lm.composite_score.desc().nullslast(), Entity.name.asc(), Entity.id)
     )
     if entity_type:
         stmt = stmt.where(Entity.entity_type == entity_type)
-
-    result = await db.execute(stmt)
-    rows = result.all()
-
-    # Deduplicate — take highest metric per entity
-    seen = {}
-    for entity, metric in rows:
-        eid = str(entity.id)
-        if eid not in seen:
-            seen[eid] = (entity, metric)
-        elif metric and (seen[eid][1] is None or
-                         (metric.composite_score or 0) > (seen[eid][1].composite_score or 0)):
-            seen[eid] = (entity, metric)
+    (rows,) = await run_queries(stmt)
 
     portfolio = []
-    for i, (entity, metric) in enumerate(seen.values()):
-        score = metric.composite_score if metric else None
-        health = (
-            "Strong" if score and score >= 40 else
-            "Good" if score and score >= 25 else
-            "Needs data" if score is None else
-            "Weak"
-        )
+    for i, r in enumerate(rows):
+        score = r[6]
         portfolio.append({
             "rank": i + 1,
-            "id": str(entity.id),
-            "name": entity.name,
-            "type": entity.entity_type,
-            "category": entity.category,
-            "country": entity.country,
-            "is_international": entity.is_international or False,
-            "composite_score": round(score, 1) if score else None,
-            "google_trend_score": metric.google_trend_score if metric else None,
-            "news_mentions_7d": metric.news_mentions_7d if metric else None,
-            "health": health,
-            "last_updated": metric.time.isoformat() if metric and metric.time else None,
+            "id": str(r[0]), "name": r[1], "type": r[2], "category": r[3], "country": r[4],
+            "primary_market": r[11],
+            "is_international": r[5] or False,
+            "composite_score": round(float(score), 1) if score is not None else None,
+            "google_trend_score": r[7], "news_mentions_7d": r[8],
+            "health": health_label(score),
+            "data_completeness": r[10],
+            "last_updated": r[9].isoformat() if r[9] else None,
         })
 
-    # Re-rank after dedup
-    portfolio.sort(key=lambda x: x["composite_score"] or -1, reverse=True)
-    for i, p in enumerate(portfolio):
-        p["rank"] = i + 1
+    def _n(h):
+        return sum(1 for p in portfolio if p["health"] == h)
 
     return {
-        "portfolio": portfolio,
+        "portfolio": portfolio[offset:offset + limit],
         "total": len(portfolio),
+        "offset": offset,
+        "market": market,
         "with_scores": sum(1 for p in portfolio if p["composite_score"] is not None),
-        "health_summary": {
-            "strong": sum(1 for p in portfolio if p["health"] == "Strong"),
-            "good": sum(1 for p in portfolio if p["health"] == "Good"),
-            "needs_data": sum(1 for p in portfolio if p["health"] == "Needs data"),
-            "weak": sum(1 for p in portfolio if p["health"] == "Weak"),
-        },
+        "health_summary": {"strong": _n("Strong"), "good": _n("Good"), "needs_data": _n("Needs data"), "weak": _n("Weak")},
     }
 
 
@@ -301,8 +239,8 @@ async def get_executive_report_pdf(
     """
     from app.services.ai.report_generator import generate_executive_report_pdf
 
-    kpis = await get_kpis(db, user)
-    briefing_response = await get_executive_briefing(db, user)
+    kpis = await _kpis_payload("all")
+    briefing_response = await _briefing_payload("all")
 
     cities_result = await db.execute(
         select(City.name, City.tier, City.music_market_size, City.active_on_district)

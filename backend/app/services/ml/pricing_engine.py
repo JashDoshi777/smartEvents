@@ -216,6 +216,10 @@ def _train_models():
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
+# Constant price elasticity of demand used to move fill along price (fill ∝ price^-0.8).
+PRICE_ELASTICITY = 0.8
+
+
 class _PricingMLEngine:
     """Lazy-loaded singleton that holds the trained models."""
 
@@ -329,36 +333,44 @@ class _PricingMLEngine:
                     phq_rank,
                 ]])
 
-                raw_price = float(self._price_model.predict(X)[0])
-                fill_rate = float(self._fill_model.predict(X)[0])
+                raw_price = max(299.0, float(self._price_model.predict(X)[0]))
+                # GBR output is unbounded — keep fill a valid 1–99% share.
+                model_fill = min(0.99, max(0.01, float(self._fill_model.predict(X)[0])))
+
+                # The fill model was trained on the price the market bore (raw_price), so the
+                # fill it predicts is "fill AT raw_price". A different ticket price must move
+                # fill along a constant-elasticity demand curve, otherwise the Deal Modeler's
+                # revenue would grow linearly with price forever.
+                def fill_at(price: float) -> float:
+                    ratio = max(price, 1.0) / raw_price
+                    return min(0.99, max(0.01, model_fill / (ratio ** PRICE_ELASTICITY)))
 
                 # Blend ML price with proposed_price (trust proposed as anchor)
                 blended_price = 0.7 * raw_price + 0.3 * proposed_price
 
                 # Round to nearest ₹100
                 recommended = round(max(299.0, min(blended_price, 50000.0)) / 100) * 100
-                fill_pct    = round(fill_rate * 100, 1)
+                fill_pct    = round(fill_at(proposed_price) * 100, 1)   # fill at the PROPOSED price
+                fill_at_rec = round(fill_at(recommended) * 100, 1)
 
                 # Confidence: data completeness proxy
                 feature_quality = min(1.0, composite_score / 100)
                 confidence = round(0.6 + 0.4 * feature_quality, 2) * 100
 
-                # Price sensitivity curve (7 points for frontend chart)
+                # Price sensitivity curve (7 points for frontend chart) — same fill_at(), so
+                # the 1.0x point equals predicted_fill_rate exactly and the curve is monotone.
                 sensitivity = []
                 for mult in [0.5, 0.7, 0.85, 1.0, 1.2, 1.5, 2.0]:
                     test_price = proposed_price * mult
-                    test_X = X.copy()
-                    # Rough inverse: higher price → lower fill
-                    price_ratio = test_price / (raw_price + 1e-6)
-                    approx_fill = fill_rate / (price_ratio ** 0.8)
                     sensitivity.append({
                         "price": round(test_price / 100) * 100,
-                        "attendance_pct": round(min(99, max(1, approx_fill * 100)), 1),
+                        "attendance_pct": round(fill_at(test_price) * 100, 1),
                     })
 
                 return {
                     "recommended_price":   recommended,
                     "predicted_fill_rate": fill_pct,
+                    "predicted_fill_rate_at_recommended": fill_at_rec,
                     "confidence":          round(confidence),
                     "price_delta":         round(recommended - proposed_price),
                     "sensitivity_curve":   sensitivity,

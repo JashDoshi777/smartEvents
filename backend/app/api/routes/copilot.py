@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.groq_service import chat_completion, stream_completion
+from app.services.groq_service import chat_completion, stream_completion, LIVEIQ_SYSTEM_PROMPT
+from app.services.copilot_context import build_context, GROUNDING_RULES
 from app.core.config import settings
 from app.core.database import get_db
 from app.api.deps import get_current_user
@@ -56,7 +57,7 @@ class ChatResponse(BaseModel):
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest, user: User = Depends(get_current_user)):
+async def chat(req: ChatRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Single-turn Copilot chat.
 
@@ -83,8 +84,12 @@ async def chat(req: ChatRequest, user: User = Depends(get_current_user)):
     log = logger.bind(model=req.model or settings.GROQ_MODEL)
     log.info("Copilot chat request", message_count=len(messages))
 
+    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    context, sources = await build_context(db, last_user)
+
     try:
         answer = await chat_completion(
+            system_prompt=LIVEIQ_SYSTEM_PROMPT + GROUNDING_RULES + context,
             messages=messages,
             model=req.model,
             temperature=req.temperature,
@@ -99,12 +104,12 @@ async def chat(req: ChatRequest, user: User = Depends(get_current_user)):
     return ChatResponse(
         response=answer,
         model=req.model or settings.GROQ_MODEL,
-        sources=[],  # TODO Sprint 3: inject RAG sources from vector DB
+        sources=sources,
     )
 
 
 @router.post("/stream")
-async def chat_stream(req: ChatRequest, user: User = Depends(get_current_user)):
+async def chat_stream(req: ChatRequest, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Streaming Copilot chat using Server-Sent Events (SSE).
 
@@ -125,9 +130,17 @@ async def chat_stream(req: ChatRequest, user: User = Depends(get_current_user)):
     else:
         raise HTTPException(status_code=422, detail="Provide either 'question' or 'messages'")
 
+    last_user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    context, sources = await build_context(db, last_user)
+    await db.close()  # release the pooled connection now; the LLM stream below can run for many seconds
+    system_prompt = LIVEIQ_SYSTEM_PROMPT + GROUNDING_RULES + context
+
     async def event_generator():
         try:
+            if sources:
+                yield f"data: {json.dumps({'sources': sources})}\n\n"
             async for chunk in stream_completion(
+                system_prompt=system_prompt,
                 messages=messages,
                 model=req.model,
                 temperature=req.temperature,
@@ -138,7 +151,7 @@ async def chat_stream(req: ChatRequest, user: User = Depends(get_current_user)):
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error("Groq stream error", error=str(e))
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': 'The AI service hit an error. Please try again.'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -207,9 +220,10 @@ async def copilot_websocket(websocket: WebSocket, db: AsyncSession = Depends(get
 
             # Build messages with optional history
             messages = [*history, {"role": "user", "content": question}]
+            context, _sources = await build_context(db, str(question))
 
             try:
-                async for chunk in stream_completion(messages=messages, max_tokens=2048):
+                async for chunk in stream_completion(messages=messages, max_tokens=2048, system_prompt=LIVEIQ_SYSTEM_PROMPT + GROUNDING_RULES + context):
                     await websocket.send_text(chunk)
                 await websocket.send_text("[DONE]")
             except Exception as e:

@@ -25,10 +25,11 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, desc
+from sqlalchemy import case, func, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, run_queries
+from app.services.market_scope import Market, market_clause
 from app.models.entity import Entity
 from app.models.metrics import EntityMetric
 from app.models.intelligence import SocialPost
@@ -64,26 +65,20 @@ async def get_entity_sentiment(
     except ValueError:
         raise HTTPException(400, "Invalid entity_id format")
 
-    entity = await db.scalar(select(Entity).where(Entity.id == uid))
-    if entity is None:
-        raise HTTPException(404, f"Entity '{entity_id}' not found")
-
-    # Latest aggregate — written by social_listening.py each cycle it ran for this entity.
-    latest_metric = await db.scalar(
+    # Latest aggregate row that actually carries sentiment (written by the
+    # social-listening worker) + recent real posts + the entity, in parallel.
+    entity_rows, metric_rows, post_rows = await run_queries(
+        select(Entity).where(Entity.id == uid),
         select(EntityMetric)
         .where(EntityMetric.entity_id == uid, EntityMetric.sentiment_sample_size.isnot(None))
-        .order_by(desc(EntityMetric.time))
-        .limit(1)
+        .order_by(desc(EntityMetric.time)).limit(1),
+        select(SocialPost).where(SocialPost.entity_id == uid).order_by(desc(SocialPost.analyzed_at)).limit(10),
     )
-
-    # Real recent individual posts, for a "here's what people actually said" view.
-    recent_posts_result = await db.execute(
-        select(SocialPost)
-        .where(SocialPost.entity_id == uid)
-        .order_by(desc(SocialPost.analyzed_at))
-        .limit(10)
-    )
-    recent_posts = recent_posts_result.scalars().all()
+    if not entity_rows:
+        raise HTTPException(404, f"Entity '{entity_id}' not found")
+    entity = entity_rows[0][0]
+    latest_metric = metric_rows[0][0] if metric_rows else None
+    recent_posts = [r[0] for r in post_rows]
 
     if latest_metric is None and not recent_posts:
         return {
@@ -136,16 +131,15 @@ async def get_trending_topics(
     except ValueError:
         raise HTTPException(400, "Invalid entity_id format")
 
-    entity = await db.scalar(select(Entity).where(Entity.id == uid))
-    if entity is None:
-        raise HTTPException(404, f"Entity '{entity_id}' not found")
-
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    posts_result = await db.execute(
-        select(SocialPost.content_snippet)
-        .where(SocialPost.entity_id == uid, SocialPost.analyzed_at >= since)
+    entity_rows, post_rows = await run_queries(
+        select(Entity).where(Entity.id == uid),
+        select(SocialPost.content_snippet).where(SocialPost.entity_id == uid, SocialPost.analyzed_at >= since),
     )
-    snippets = [row[0] or "" for row in posts_result.all()]
+    if not entity_rows:
+        raise HTTPException(404, f"Entity '{entity_id}' not found")
+    entity = entity_rows[0][0]
+    snippets = [row[0] or "" for row in post_rows]
 
     topic_counts: Dict[str, int] = {t: 0 for t in TOPICS}
     for snippet in snippets:
@@ -172,45 +166,40 @@ async def get_trending_topics(
 
 @router.get("/crisis-alerts", summary="Entities with a real negative-sentiment spike")
 async def get_crisis_alerts(
+    market: Market = "all",
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     """
-    Real spike detection: for each entity with social data, compares the
-    negative-post share in the last 24h against the prior 7 days. Flags
-    entities where negative share rose by >=20 percentage points AND at
-    least 3 posts were collected in the last 24h (avoids flagging a
-    single angry post as a "spike" off a tiny sample).
+    Spike detection in ONE grouped query (was 2 queries per entity): compares
+    the negative-post share in the last 24h against the prior 7 days and flags
+    entities where it rose >=20 percentage points AND >=3 posts were collected
+    in the last 24h (a single angry post off a tiny sample is not a spike).
     """
     now = datetime.now(timezone.utc)
     last_24h = now - timedelta(hours=24)
-    prior_7d_start = now - timedelta(days=8)  # the 7 days BEFORE the last 24h window
+    prior_start = now - timedelta(days=8)  # the 7 days BEFORE the last 24h window
 
-    async def _negative_share(entity_id, start, end) -> tuple[float, int]:
-        result = await db.execute(
-            select(SocialPost.sentiment_label)
-            .where(SocialPost.entity_id == entity_id, SocialPost.analyzed_at >= start, SocialPost.analyzed_at < end)
+    recent = (SocialPost.analyzed_at >= last_24h) & (SocialPost.analyzed_at < now)
+    prior = (SocialPost.analyzed_at >= prior_start) & (SocialPost.analyzed_at < last_24h)
+    neg = SocialPost.sentiment_label == "negative"
+    stmt = (
+        select(
+            Entity.id, Entity.name,
+            func.count().filter(recent), func.count().filter(recent & neg),
+            func.count().filter(prior), func.count().filter(prior & neg),
         )
-        labels = [row[0] for row in result.all()]
-        if not labels:
-            return 0.0, 0
-        negative = sum(1 for l in labels if l == "negative")
-        return negative / len(labels), len(labels)
-
-    # Entities with ANY social data at all, to scope the scan to real coverage.
-    entities_result = await db.execute(
-        select(Entity.id, Entity.name).join(SocialPost, SocialPost.entity_id == Entity.id).distinct()
+        .join(SocialPost, SocialPost.entity_id == Entity.id)
+        .where(market_clause(market), SocialPost.analyzed_at >= prior_start)
+        .group_by(Entity.id, Entity.name)
+        .having(func.count().filter(recent) >= 3)
     )
-    entities = entities_result.all()
+    (rows,) = await run_queries(stmt)
 
     alerts = []
-    for entity_id, entity_name in entities:
-        recent_share, recent_count = await _negative_share(entity_id, last_24h, now)
-        baseline_share, baseline_count = await _negative_share(entity_id, prior_7d_start, last_24h)
-
-        if recent_count < 3:
-            continue  # too little data in the last 24h to call this a real spike
-
+    for entity_id, entity_name, r_total, r_neg, b_total, b_neg in rows:
+        recent_share = r_neg / r_total if r_total else 0.0
+        baseline_share = b_neg / b_total if b_total else 0.0
         delta = recent_share - baseline_share
         if delta >= 0.20:
             severity = "critical" if delta >= 0.50 else ("high" if delta >= 0.35 else "medium")
@@ -221,14 +210,14 @@ async def get_crisis_alerts(
                 "negative_share_last_24h": round(recent_share, 2),
                 "negative_share_prior_7d": round(baseline_share, 2),
                 "delta_pct_points": round(delta * 100, 1),
-                "posts_last_24h": recent_count,
-                "posts_prior_7d": baseline_count,
+                "posts_last_24h": r_total,
+                "posts_prior_7d": b_total,
             })
 
-    alerts.sort(key=lambda a: a["delta_pct_points"], reverse=True)
-
+    alerts.sort(key=lambda a: (-a["delta_pct_points"], a["entity_name"]))
     return {
         "alerts": alerts,
         "total": len(alerts),
+        "market": market,
         "methodology": "Negative-sentiment share in the last 24h vs the prior 7 days, per entity — flagged at >=20 percentage point increase with >=3 posts in the last 24h.",
     }

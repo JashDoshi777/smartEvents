@@ -21,17 +21,43 @@ from app.models.venue import Venue
 logger = structlog.get_logger()
 
 
+# Source spellings -> our tracked city names (NCR / MMR satellites roll up to the metro we track).
+CITY_CANONICAL = {
+    "bangalore": "Bengaluru", "bengaluru": "Bengaluru", "gurgaon": "Delhi NCR", "gurugram": "Delhi NCR",
+    "noida": "Delhi NCR", "new delhi": "Delhi NCR", "delhi": "Delhi NCR", "ghaziabad": "Delhi NCR",
+    "faridabad": "Delhi NCR", "greater noida": "Delhi NCR", "navi mumbai": "Mumbai", "thane": "Mumbai",
+    "bombay": "Mumbai", "calcutta": "Kolkata", "madras": "Chennai", "mysore": "Mysuru", "mangalore": "Mangaluru",
+    "trivandrum": "Thiruvananthapuram", "panaji": "Goa", "panjim": "Goa", "allahabad": "Prayagraj",
+    "cochin": "Kochi", "baroda": "Vadodara", "vizag": "Visakhapatnam",
+}
+
+
+def canonical_city(city: Optional[str]) -> Optional[str]:
+    if not city:
+        return None
+    c = " ".join(city.replace("-", " ").split())
+    return CITY_CANONICAL.get(c.lower(), c)
+
+
 async def _resolve_venue(session, venue_name: Optional[str], city: Optional[str]) -> Optional[UUID]:
-    """Match a scraped venue_name + city against the real venues table."""
-    if not venue_name or not city:
+    """Match a scraped venue_name + city against the real venues table.
+
+    Links only when the match is UNAMBIGUOUS (exactly one venue in that city whose name contains the
+    scraped name, or equals it); ambiguous or missing -> NULL rather than a guess."""
+    city = canonical_city(city)
+    if not venue_name or not city or len(venue_name.strip()) < 4:
         return None
     result = await session.execute(
-        select(Venue.id).where(
-            Venue.city.ilike(f"%{city}%"),
-            Venue.name.ilike(f"%{venue_name}%"),
-        ).limit(1)
+        select(Venue.id, Venue.name).where(
+            Venue.city.ilike(city),
+            Venue.name.ilike(f"%{venue_name.strip()}%"),
+        ).limit(3)
     )
-    return result.scalar_one_or_none()
+    rows = result.all()
+    if len(rows) == 1:
+        return rows[0][0]
+    exact = [r[0] for r in rows if r[1].lower() == venue_name.strip().lower()]
+    return exact[0] if len(exact) == 1 else None
 
 
 async def _resolve_entity(session, title: str) -> Optional[UUID]:
@@ -116,6 +142,8 @@ async def upsert_scraped_events(events_raw: List[Dict[str, Any]]) -> Dict[str, i
                         status=raw.get("status", "upcoming"),
                         entity_id=entity_id,
                         venue_id=venue_id,
+                        city=canonical_city(raw.get("city")),
+                        venue_name_raw=(raw.get("venue_name") or None) and raw["venue_name"][:255],
                         scraped_at=now,
                         created_at=now,
                         updated_at=now,
@@ -126,6 +154,8 @@ async def upsert_scraped_events(events_raw: List[Dict[str, Any]]) -> Dict[str, i
                         "ticket_price_max": raw.get("ticket_price_max"),
                         "status": raw.get("status", "upcoming"),
                         "venue_id": venue_id,
+                        "city": canonical_city(raw.get("city")),
+                        "venue_name_raw": (raw.get("venue_name") or None) and raw["venue_name"][:255],
                         "entity_id": entity_id,
                         "updated_at": now,
                     }

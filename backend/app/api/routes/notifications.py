@@ -33,11 +33,12 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, desc, func
+from sqlalchemy import and_, exists, func, literal, select
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import AutocommitSessionLocal, get_db, run_queries
 from app.models.entity import Entity
 from app.models.intelligence import TrendSignal
 from app.models.user_data import NotificationRead, Watchlist
@@ -46,6 +47,26 @@ from app.models.user import User
 
 router = APIRouter()
 logger = structlog.get_logger()
+
+
+def _current_signals():
+    """One row per (entity, signal_type): the NEWEST signal. The generator
+    re-emits the same breakout/news signal over time (14 rows -> 9 distinct
+    in prod data), so listing every row showed duplicates and inflated the
+    unread badge. Both the list and the badge count use this same set, so they
+    can never disagree."""
+    sub = (
+        select(TrendSignal)
+        .distinct(TrendSignal.entity_id, TrendSignal.signal_type)
+        .order_by(TrendSignal.entity_id, TrendSignal.signal_type, TrendSignal.detected_at.desc())
+        .subquery("current_signals")
+    )
+    from sqlalchemy.orm import aliased
+    return aliased(TrendSignal, sub)
+
+
+def _read_exists(sig, user_id):
+    return exists().where(and_(NotificationRead.user_id == user_id, NotificationRead.trend_signal_id == sig.id))
 
 
 def _to_dict(sig: TrendSignal, entity_name: str | None, is_read: bool, is_watched: bool) -> dict:
@@ -64,143 +85,71 @@ def _to_dict(sig: TrendSignal, entity_name: str | None, is_read: bool, is_watche
 
 @router.get("", summary="List notifications, newest first — watchlisted entities surfaced first")
 async def list_notifications(
-    limit: int = Query(20, le=100),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000),
     unread_only: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    read_subq = (
-        select(NotificationRead.trend_signal_id)
-        .where(NotificationRead.user_id == user.id)
-        .scalar_subquery()
-    )
-
-    watched_result = await db.execute(select(Watchlist.entity_id).where(Watchlist.user_id == user.id))
-    watched_entity_ids = {r for (r,) in watched_result.all()}
-
-    # Pull enough recency-ordered rows to re-sort watched-first before
-    # truncating to `limit`. This window alone isn't sufficient: a watched
-    # entity's signal older than the window would never surface even though
-    # it's exactly what "priority" alerts are for. So watched-entity signals
-    # are ALSO fetched directly (unbounded by recency, only by unread_only),
-    # and merged in below — capped at 500 so this stays bounded even if
-    # TrendSignal grows large.
-    fetch_cap = min(limit * 10, 500)
-    recent_stmt = (
-        select(TrendSignal, Entity.name)
-        .outerjoin(Entity, Entity.id == TrendSignal.entity_id)
-        .order_by(desc(TrendSignal.detected_at))
-        .limit(fetch_cap)
+    """One query: read/watched flags are EXISTS sub-selects, ordering is
+    watched-first then newest-first, applied in SQL so pagination is exact
+    (the previous version merged two capped fetches in Python)."""
+    sig = _current_signals()
+    is_read = _read_exists(sig, user.id).label("is_read")
+    is_watched = exists().where(and_(Watchlist.user_id == user.id, Watchlist.entity_id == sig.entity_id)).label("is_watched")
+    stmt = (
+        select(sig, Entity.name, is_read, is_watched)
+        .outerjoin(Entity, Entity.id == sig.entity_id)
     )
     if unread_only:
-        recent_stmt = recent_stmt.where(TrendSignal.id.not_in(read_subq))
+        stmt = stmt.where(~_read_exists(sig, user.id))
+    stmt = stmt.order_by(is_watched.desc(), sig.detected_at.desc().nullslast(), sig.id).limit(limit).offset(offset)
 
-    recent_result = await db.execute(recent_stmt)
-    rows = list(recent_result.all())
-
-    if watched_entity_ids:
-        watched_stmt = (
-            select(TrendSignal, Entity.name)
-            .outerjoin(Entity, Entity.id == TrendSignal.entity_id)
-            .where(TrendSignal.entity_id.in_(watched_entity_ids))
-            .order_by(desc(TrendSignal.detected_at))
-            .limit(fetch_cap)
-        )
-        if unread_only:
-            watched_stmt = watched_stmt.where(TrendSignal.id.not_in(read_subq))
-
-        watched_signal_result = await db.execute(watched_stmt)
-        seen_ids = {sig.id for sig, _ in rows}
-        for sig, name in watched_signal_result.all():
-            if sig.id not in seen_ids:
-                rows.append((sig, name))
-                seen_ids.add(sig.id)
-
-    # Batch-fetch this user's read signal ids so is_read can be computed
-    # without a per-row query.
-    signal_ids = [sig.id for sig, _ in rows]
-    read_ids: set = set()
-    if signal_ids:
-        read_result = await db.execute(
-            select(NotificationRead.trend_signal_id)
-            .where(NotificationRead.user_id == user.id, NotificationRead.trend_signal_id.in_(signal_ids))
-        )
-        read_ids = {r for (r,) in read_result.all()}
-
-    # Watched-entity signals first, each group still newest-first: the
-    # merged list isn't globally sorted by detected_at anymore (the watched
-    # signals appended above may be older than the last "recent" row), so
-    # explicitly sort by detected_at within each group instead of relying on
-    # Python's stable-sort-preserves-input-order (which only worked when the
-    # input was already fully time-ordered).
-    def sort_key(row):
-        sig, _ = row
-        watched_rank = 0 if sig.entity_id in watched_entity_ids else 1
-        return (watched_rank, -(sig.detected_at.timestamp() if sig.detected_at else 0))
-
-    rows.sort(key=sort_key)
-    rows = rows[:limit]
-
+    rows = (await db.execute(stmt)).all()
     return {
-        "notifications": [
-            _to_dict(sig, name, sig.id in read_ids, sig.entity_id in watched_entity_ids)
-            for sig, name in rows
-        ],
+        "notifications": [_to_dict(r[0], r[1], bool(r[2]), bool(r[3])) for r in rows],
         "total": len(rows),
+        "offset": offset,
     }
 
 
 @router.get("/unread-count", summary="Unread notification count for the bell badge")
 async def get_unread_count(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    read_subq = (
-        select(NotificationRead.trend_signal_id)
-        .where(NotificationRead.user_id == user.id)
-        .scalar_subquery()
-    )
-    count = await db.scalar(
-        select(func.count(TrendSignal.id)).where(TrendSignal.id.not_in(read_subq))
-    )
+    sig = _current_signals()
+    count = await db.scalar(select(func.count()).select_from(sig).where(~_read_exists(sig, user.id)))
     return {"unread_count": count or 0}
 
 
+@router.post("/read-all", summary="Mark all notifications as read")
+async def mark_all_read(user: User = Depends(get_current_user)):
+    """Single INSERT .. SELECT (atomic by itself, so it runs in autocommit: 1 round-trip)."""
+    sig = _current_signals()
+    # id/read_at have only Python-side defaults (a single shared constant under
+    # INSERT..SELECT -> PK collisions), so generate them in SQL per row.
+    unread = select(literal(user.id, type_=PG_UUID(as_uuid=True)), sig.id, func.gen_random_uuid(), func.now()).where(~_read_exists(sig, user.id))
+    stmt = pg_insert(NotificationRead).from_select(["user_id", "trend_signal_id", "id", "read_at"], unread, include_defaults=False)
+    stmt = stmt.on_conflict_do_nothing(constraint="uq_notification_read_user_signal")
+    async with AutocommitSessionLocal() as s:
+        result = await s.execute(stmt)
+    return {"status": "ok", "marked_read": max(result.rowcount or 0, 0)}
+
+
 @router.post("/{notification_id}/read", summary="Mark one notification as read")
-async def mark_read(notification_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+async def mark_read(notification_id: str, user: User = Depends(get_current_user)):
     try:
         uid = UUID(notification_id)
-    except ValueError:
+    except (ValueError, AttributeError):
         raise HTTPException(400, "Invalid notification_id format")
 
-    exists = await db.scalar(select(TrendSignal.id).where(TrendSignal.id == uid))
-    if exists is None:
-        raise HTTPException(404, f"Notification '{notification_id}' not found")
-
-    # ON CONFLICT DO NOTHING — marking an already-read signal read again is
-    # a no-op, not an error (the unique constraint would otherwise raise).
-    stmt = pg_insert(NotificationRead).values(user_id=user.id, trend_signal_id=uid)
+    # INSERT .. SELECT from trend_signals: inserts only if the signal exists;
+    # ON CONFLICT DO NOTHING makes re-marking idempotent.
+    unread = select(literal(user.id, type_=PG_UUID(as_uuid=True)), TrendSignal.id, func.gen_random_uuid(), func.now()).where(TrendSignal.id == uid)
+    stmt = pg_insert(NotificationRead).from_select(["user_id", "trend_signal_id", "id", "read_at"], unread, include_defaults=False)
     stmt = stmt.on_conflict_do_nothing(constraint="uq_notification_read_user_signal")
-    await db.execute(stmt)
-    await db.commit()
+    async with AutocommitSessionLocal() as s:
+        result = await s.execute(stmt)
+        if (result.rowcount or 0) == 0:
+            known = await s.scalar(select(TrendSignal.id).where(TrendSignal.id == uid))
+            if known is None:
+                raise HTTPException(404, f"Notification '{notification_id}' not found")
     return {"status": "ok", "id": notification_id}
-
-
-@router.post("/read-all", summary="Mark all notifications as read")
-async def mark_all_read(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    read_subq = (
-        select(NotificationRead.trend_signal_id)
-        .where(NotificationRead.user_id == user.id)
-        .scalar_subquery()
-    )
-    unread_result = await db.execute(
-        select(TrendSignal.id).where(TrendSignal.id.not_in(read_subq))
-    )
-    unread_ids = [r for (r,) in unread_result.all()]
-
-    if unread_ids:
-        stmt = pg_insert(NotificationRead).values(
-            [{"user_id": user.id, "trend_signal_id": sid} for sid in unread_ids]
-        )
-        stmt = stmt.on_conflict_do_nothing(constraint="uq_notification_read_user_signal")
-        await db.execute(stmt)
-        await db.commit()
-
-    return {"status": "ok", "marked_read": len(unread_ids)}

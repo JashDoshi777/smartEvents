@@ -1,11 +1,13 @@
 'use client';
 
+/* eslint-disable react-hooks/set-state-in-effect -- these effects sync state from external sources (URL params, localStorage, debounced network results), which is the intended use */
+
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import useSWR from 'swr';
 import { motion } from 'framer-motion';
-import { Search, Brain, Star, Check, GitCompareArrows, ChevronRight, X } from 'lucide-react';
+import { Search, Brain, Star, Check, GitCompareArrows, ChevronRight, X, FileSpreadsheet } from 'lucide-react';
 import { Page } from '@/components/ui/Page';
 import { GlassCard } from '@/components/ui/GlassCard';
 import { Segmented, ChipRow } from '@/components/ui/Controls';
@@ -15,9 +17,10 @@ import { Sheet } from '@/components/ui/Sheet';
 import { useToast } from '@/components/ui/Toast';
 import { useMarketScope } from '@/components/providers/MarketScopeProvider';
 import { ScoreRing } from '@/components/intel/ScoreRing';
-import { scoreColor, verdictFor, typeLabel, initials, useScopedPortfolio } from '@/components/intel/entity-utils';
+import { verdictFor, typeLabel, initials, useScopedPortfolio } from '@/components/intel/entity-utils';
 import { getWatchlist, addToWatchlist, removeFromWatchlist, getEntityScore, getEntityCities, compareEntities, PortfolioEntity } from '@/lib/api';
 import { compact, num, dateIN } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { Tick } from '@/components/intel/Tick';
 import k from '@/components/intel/Kit.module.css';
 import styles from './page.module.css';
@@ -174,9 +177,10 @@ function Hub() {
   const { scope, isIndia } = useMarketScope();
   const { all, scoped, isLoading, error, mutate: reload } = useScopedPortfolio();
 
-  const [query, setQuery] = useState('');
-  const [type, setType] = useState('all');
-  const [sort, setSort] = useState<'score' | 'name'>('score');
+  // Filters live in the URL (?q=&type=&sort=&entity=) so a view can be shared or restored on reload.
+  const [query, setQuery] = useState(() => params.get('q') ?? '');
+  const [type, setType] = useState(() => params.get('type') ?? 'all');
+  const [sort, setSort] = useState<'score' | 'name'>(() => (params.get('sort') === 'name' ? 'name' : 'score'));
   const pending = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [compareMode, setCompareMode] = useState(false);
@@ -190,6 +194,23 @@ function Hub() {
   useEffect(() => { if (deepLink) setSelectedId(deepLink); }, [deepLink]);
 
   const selected = all.find(e => e.id === selectedId) ?? null;
+
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    const set = (key: string, v: string | null, def = '') => { if (v && v !== def) u.searchParams.set(key, v); else u.searchParams.delete(key); };
+    set('q', query.trim() || null); set('type', type, 'all'); set('sort', sort, 'score'); set('entity', selectedId);
+    const next = u.pathname + u.search;
+    if (next !== window.location.pathname + window.location.search) window.history.replaceState(window.history.state, '', next);
+  }, [query, type, sort, selectedId]);
+
+  function onListKey(ev: React.KeyboardEvent<HTMLDivElement>) {
+    if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+    const rows = Array.from(ev.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="option"]'));
+    const i = rows.indexOf(document.activeElement as HTMLButtonElement);
+    if (i === -1 && ev.key === 'ArrowUp') return;
+    ev.preventDefault();
+    rows[Math.max(0, Math.min(rows.length - 1, i + (ev.key === 'ArrowDown' ? 1 : -1)))]?.focus();
+  }
 
   async function toggleWatch(e: PortfolioEntity) {
     if (pending.current) return;
@@ -213,6 +234,13 @@ function Hub() {
     const list = scoped.filter(e => (type === 'all' || e.type === type) && (!q || e.name.toLowerCase().includes(q) || (e.category ?? '').toLowerCase().includes(q)));
     return sort === 'name' ? [...list].sort((a, b) => a.name.localeCompare(b.name)) : [...list].sort((a, b) => (b.composite_score ?? -1) - (a.composite_score ?? -1));
   }, [scoped, query, type, sort]);
+
+  function exportCsv() {
+    downloadCsv(`liveiq-intelligence-${scope}-${new Date().toISOString().slice(0, 10)}.csv`,
+      ['Rank', 'Name', 'Type', 'Category', 'Market', 'Composite score', 'Verdict', 'Google Trends', 'News mentions 7d', 'Last updated'],
+      filtered.map((e, i) => [i + 1, e.name, e.type, e.category, e.primary_market ?? (e.is_international ? 'Global' : 'India'), e.composite_score, verdictFor(e.composite_score).label, e.google_trend_score, e.news_mentions_7d, e.last_updated]));
+    toast(`Exported ${filtered.length} acts`, 'success');
+  }
 
   const scored = scoped.filter(e => e.composite_score != null);
   const avg = scored.length ? scored.reduce((a, e) => a + (e.composite_score ?? 0), 0) / scored.length : null;
@@ -254,6 +282,7 @@ function Hub() {
                 <input className={`input ${styles.searchInput}`} type="search" placeholder="Search by name or category" aria-label="Search entities" value={query} onChange={e => setQuery(e.target.value)} />
               </div>
               <Segmented ariaLabel="Sort" value={sort} onChange={setSort} options={[{ value: 'score', label: 'Top score' }, { value: 'name', label: 'A–Z' }]} />
+              <button className="btn btn-sm btn-ghost" style={{ minHeight: 44 }} onClick={exportCsv} disabled={filtered.length === 0} aria-label="Export list as CSV"><FileSpreadsheet size={14} strokeWidth={1.7} /> CSV</button>
               <button className="btn btn-sm btn-tinted" style={{ minHeight: 44 }} aria-pressed={compareMode} onClick={() => { setCompareMode(m => !m); setCmp([]); }}>
                 <GitCompareArrows size={14} strokeWidth={1.7} /> {compareMode ? 'Done' : 'Compare'}
               </button>
@@ -266,7 +295,7 @@ function Hub() {
               <span className="t-footnote text-secondary">{filtered.length} {filtered.length === 1 ? 'result' : 'results'}</span>
               <span className="t-footnote text-tertiary">{compareMode ? `${cmp.length}/4 selected` : 'Score out of 100'}</span>
             </div>
-            <div className={styles.rows} role="listbox" aria-label="Entities">
+            <div className={styles.rows} role="listbox" aria-label="Entities" onKeyDown={onListKey}>
               {isLoading && !all.length ? (
                 <div style={{ display: 'grid', gap: 8, padding: 6 }}>{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} height={56} radius={12} />)}</div>
               ) : error && !all.length ? (

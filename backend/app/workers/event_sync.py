@@ -168,6 +168,8 @@ async def _upsert_events(events_raw: List[Dict[str, Any]]) -> Dict[str, int]:
                     continue
 
                 entity_id = await _resolve_entity(session, norm["title"])
+                from app.services.ingestion.scraped_event_upsert import _resolve_venue, canonical_city
+                venue_id = await _resolve_venue(session, norm.get("venue_name"), norm.get("city"))
 
                 try:
                     stmt = pg_insert(Event).values(
@@ -182,6 +184,9 @@ async def _upsert_events(events_raw: List[Dict[str, Any]]) -> Dict[str, int]:
                         cover_image_url  = norm["cover_image_url"],
                         status           = norm["status"],
                         entity_id        = entity_id,
+                        venue_id         = venue_id,
+                        city             = canonical_city(norm.get("city")),
+                        venue_name_raw   = (norm.get("venue_name") or "")[:255] or None,
                         scraped_at       = norm["scraped_at"],
                         created_at       = norm["scraped_at"],
                         updated_at       = norm["scraped_at"],
@@ -194,6 +199,9 @@ async def _upsert_events(events_raw: List[Dict[str, Any]]) -> Dict[str, int]:
                             "status":           norm["status"],
                             "updated_at":       norm["scraped_at"],
                             "entity_id":        entity_id,
+                            "venue_id":         venue_id,
+                            "city":             canonical_city(norm.get("city")),
+                            "venue_name_raw":   (norm.get("venue_name") or "")[:255] or None,
                         }
                     )
                     await session.execute(stmt)
